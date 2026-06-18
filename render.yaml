@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: whatsapp-predicciones
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: VERIFY_TOKEN
+        value: mi_token_secreto_123
