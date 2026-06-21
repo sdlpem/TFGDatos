@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import os
 import json
 import requests
@@ -12,20 +12,31 @@ WA_PHONE_ID  = os.environ.get("WA_PHONE_ID", "")
 
 
 # ═══════════════════════════════════════════════════════
-# PREGUNTA ACTIVA
+# PREGUNTA ACTIVA (se sobreescribe desde el panel)
 # ═══════════════════════════════════════════════════════
 
-PREGUNTA_ACTIVA = {
+PREGUNTA_DEFAULT = {
     "texto": "¿Crees que subirá el PIB en 2027?",
     "tipo": "sino",
-    "plantilla": "pregunta",   # Nombre de la plantilla en Meta
+    "plantilla": "pregunta",
     "min": None,
     "max": None,
 }
 
+def cargar_pregunta():
+    try:
+        with open("pregunta.json", "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return PREGUNTA_DEFAULT
+
+def guardar_pregunta(p):
+    with open("pregunta.json", "w") as f:
+        json.dump(p, f, indent=2, ensure_ascii=False)
+
 
 # ═══════════════════════════════════════════════════════
-# ESTADOS Y VOTOS
+# UTILIDADES JSON
 # ═══════════════════════════════════════════════════════
 
 def cargar_json(fichero):
@@ -87,7 +98,6 @@ def enviar_plantilla(numero, nombre_plantilla):
     print(f"📤 Plantilla '{nombre_plantilla}' enviada a {numero}: {r.status_code}")
 
 def enviar_botones_cambiar(numero, respuesta_actual):
-    """Envía botones Sí/No para confirmar si quiere cambiar su respuesta"""
     if not WA_TOKEN or not WA_PHONE_ID:
         print("⚠️  Sin credenciales para botones")
         return
@@ -130,8 +140,8 @@ def validar_respuesta(texto, pregunta):
     if tipo == "porcentaje":
         try:
             valor = float(texto.replace("%", "").replace(",", "."))
-            mn = pregunta.get("min", 0)
-            mx = pregunta.get("max", 100)
+            mn = pregunta.get("min") if pregunta.get("min") is not None else 0
+            mx = pregunta.get("max") if pregunta.get("max") is not None else 100
             if mn <= valor <= mx:
                 return True, f"{valor}%"
             return False, None
@@ -158,7 +168,9 @@ def mensaje_formato(pregunta):
     if tipo == "sino":
         return "Responde *SÍ* o *NO*"
     if tipo == "porcentaje":
-        return f"Responde con un porcentaje entre {pregunta.get('min', 0)}% y {pregunta.get('max', 100)}%"
+        mn = pregunta.get("min", 0)
+        mx = pregunta.get("max", 100)
+        return f"Responde con un porcentaje entre {mn}% y {mx}% (ejemplo: 3.5)"
     if tipo == "numero":
         mn, mx = pregunta.get("min"), pregunta.get("max")
         if mn is not None and mx is not None:
@@ -171,49 +183,45 @@ def mensaje_formato(pregunta):
 # ═══════════════════════════════════════════════════════
 
 def procesar_mensaje(numero, texto=None, button_id=None):
-    estados = cargar_json("estados.json")
-    estado  = estados.get(numero, "esperando_respuesta")
+    estados  = cargar_json("estados.json")
+    estado   = estados.get(numero, "esperando_respuesta")
+    pregunta = cargar_pregunta()
 
     print(f"📊 Estado de {numero}: {estado} | texto: {texto} | button_id: {button_id}")
 
-    # ── Respuesta via botón de la plantilla (Sí / No) ──
-    if button_id in ["si", "no", "sí"] or (texto and texto.upper() in ["SÍ", "SI", "NO"]):
-
+    # ── Botón de la plantilla (Sí / No de la pregunta) ──
+    # Los IDs de botón de plantilla llegan como el título en minúsculas
+    if button_id and button_id.lower() in ["sí", "si", "no"]:
         if estado in ["esperando_respuesta", "esperando_cambio"]:
-            # Determinar valor desde botón o texto
-            if button_id:
-                valor = "SÍ" if button_id in ["si", "sí"] else "NO"
-            else:
-                valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
-                if not valido:
-                    enviar_texto(numero, f"❌ Respuesta no válida.\n\n{mensaje_formato(PREGUNTA_ACTIVA)}")
-                    return
-
+            valor = "SÍ" if button_id.lower() in ["sí", "si"] else "NO"
             guardar_voto(numero, valor)
             estados[numero] = "confirmado"
             guardar_json("estados.json", estados)
             enviar_botones_cambiar(numero, valor)
             return
 
-    # ── Botón de cambiar respuesta ──
+    # ── Botones de confirmar cambio ──
     if button_id == "cambiar_si":
         estados[numero] = "esperando_cambio"
         guardar_json("estados.json", estados)
-        enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
+        enviar_plantilla(numero, pregunta["plantilla"])
         return
 
     if button_id == "cambiar_no":
         enviar_texto(numero, "👍 Tu voto se mantiene. ¡Gracias por participar!")
         return
 
-    # ── Estado: esperando respuesta (texto libre) ──
+    # ── Respuesta por texto ──
+    if texto is None:
+        return
+
     if estado == "esperando_respuesta":
-        valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
+        valido, valor = validar_respuesta(texto, pregunta)
         if not valido:
             enviar_texto(numero,
                 f"❌ Respuesta no válida.\n\n"
-                f"{PREGUNTA_ACTIVA['texto']}\n\n"
-                f"{mensaje_formato(PREGUNTA_ACTIVA)}"
+                f"{pregunta['texto']}\n\n"
+                f"{mensaje_formato(pregunta)}"
             )
             return
         guardar_voto(numero, valor)
@@ -221,22 +229,18 @@ def procesar_mensaje(numero, texto=None, button_id=None):
         guardar_json("estados.json", estados)
         enviar_botones_cambiar(numero, valor)
 
-    # ── Estado: confirmado, escribe CAMBIAR ──
     elif estado == "confirmado":
-        if texto and texto.strip().upper() == "CAMBIAR":
+        if texto.strip().upper() == "CAMBIAR":
             estados[numero] = "esperando_cambio"
             guardar_json("estados.json", estados)
-            enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
+            enviar_plantilla(numero, pregunta["plantilla"])
         else:
             enviar_texto(numero, "Tu voto ya está registrado. Escribe *CAMBIAR* si quieres modificarlo.")
 
-    # ── Estado: esperando cambio (texto libre) ──
     elif estado == "esperando_cambio":
-        if not texto:
-            return
-        valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
+        valido, valor = validar_respuesta(texto, pregunta)
         if not valido:
-            enviar_texto(numero, f"❌ Respuesta no válida.\n\n{mensaje_formato(PREGUNTA_ACTIVA)}")
+            enviar_texto(numero, f"❌ Respuesta no válida.\n\n{mensaje_formato(pregunta)}")
             return
         guardar_voto(numero, valor)
         estados[numero] = "confirmado"
@@ -250,35 +254,38 @@ def procesar_mensaje(numero, texto=None, button_id=None):
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
-
     if request.method == "GET":
         mode      = request.args.get("hub.mode")
         token     = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
         if mode == "subscribe" and token == VERIFY_TOKEN:
-            print("✅ Webhook verificado")
             return challenge, 200
         return "Token inválido", 403
 
     if request.method == "POST":
         data = request.json
         print(f"\n📩 Payload: {json.dumps(data, indent=2)}")
-
         try:
-            value = data["entry"][0]["changes"][0]["value"]
+            value   = data["entry"][0]["changes"][0]["value"]
             if "messages" in value:
-                mensaje   = value["messages"][0]
-                numero    = mensaje["from"]
-                tipo      = mensaje["type"]
+                mensaje = value["messages"][0]
+                numero  = mensaje["from"]
+                tipo    = mensaje["type"]
 
                 if tipo == "text":
-                    texto = mensaje["text"]["body"]
-                    procesar_mensaje(numero, texto=texto)
+                    procesar_mensaje(numero, texto=mensaje["text"]["body"])
 
                 elif tipo == "interactive":
-                    # Respuesta a botón
-                    button_id = mensaje["interactive"]["button_reply"]["id"]
-                    procesar_mensaje(numero, button_id=button_id)
+                    inter = mensaje["interactive"]
+                    # Puede ser button_reply (botones) o list_reply (listas)
+                    if "button_reply" in inter:
+                        button_id = inter["button_reply"]["id"]
+                        # Si el id no es uno de los nuestros, usar el título
+                        if not button_id:
+                            button_id = inter["button_reply"].get("title", "")
+                        procesar_mensaje(numero, button_id=button_id)
+                    elif "list_reply" in inter:
+                        procesar_mensaje(numero, texto=inter["list_reply"]["title"])
 
         except (KeyError, IndexError) as e:
             print(f"⚠️  Error: {e}")
@@ -287,7 +294,67 @@ def webhook():
 
 
 # ═══════════════════════════════════════════════════════
-# ENDPOINTS
+# PANEL DE GESTIÓN — API
+# ═══════════════════════════════════════════════════════
+
+@app.route("/admin")
+def admin():
+    return send_from_directory("static", "admin.html")
+
+@app.route("/api/pregunta", methods=["GET"])
+def api_get_pregunta():
+    return jsonify(cargar_pregunta())
+
+@app.route("/api/pregunta", methods=["POST"])
+def api_set_pregunta():
+    data = request.json
+    pregunta = {
+        "texto":    data.get("texto", ""),
+        "tipo":     data.get("tipo", "sino"),
+        "plantilla": data.get("plantilla", "pregunta"),
+        "min":      data.get("min"),
+        "max":      data.get("max"),
+    }
+    guardar_pregunta(pregunta)
+    return jsonify({"ok": True})
+
+@app.route("/api/enviar", methods=["POST"])
+def api_enviar():
+    data     = request.json
+    numeros  = data.get("numeros", [])
+    pregunta = cargar_pregunta()
+    estados  = cargar_json("estados.json")
+    enviados = 0
+    errores  = []
+
+    for numero in numeros:
+        numero = numero.strip().replace(" ", "").replace("+", "")
+        if not numero:
+            continue
+        try:
+            enviar_plantilla(numero, pregunta["plantilla"])
+            estados[numero] = "esperando_respuesta"
+            enviados += 1
+        except Exception as e:
+            errores.append({"numero": numero, "error": str(e)})
+
+    guardar_json("estados.json", estados)
+    return jsonify({"ok": True, "enviados": enviados, "errores": errores})
+
+@app.route("/api/votos", methods=["GET"])
+def api_votos():
+    votos = cargar_json("votos.json")
+    return jsonify({"total": len(votos), "votos": votos})
+
+@app.route("/api/resetear", methods=["POST"])
+def api_resetear():
+    guardar_json("estados.json", {})
+    guardar_json("votos.json", {})
+    return jsonify({"ok": True})
+
+
+# ═══════════════════════════════════════════════════════
+# ENDPOINTS LEGACY
 # ═══════════════════════════════════════════════════════
 
 @app.route("/votos", methods=["GET"])
@@ -295,28 +362,14 @@ def ver_votos():
     votos = cargar_json("votos.json")
     return jsonify({"total": len(votos), "votos": votos})
 
-@app.route("/estados", methods=["GET"])
-def ver_estados():
-    return jsonify(cargar_json("estados.json"))
-
-@app.route("/resetear/<numero>", methods=["GET"])
-def resetear_usuario(numero):
-    estados = cargar_json("estados.json")
-    votos   = cargar_json("votos.json")
-    estados.pop(numero, None)
-    votos.pop(numero, None)
-    guardar_json("estados.json", estados)
-    guardar_json("votos.json", votos)
-    return jsonify({"ok": True, "mensaje": f"{numero} reseteado"})
-
 @app.route("/enviar/<numero>", methods=["GET"])
-def enviar_pregunta(numero):
-    """Envía la pregunta manualmente a un número"""
-    enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
+def enviar_uno(numero):
+    pregunta = cargar_pregunta()
+    enviar_plantilla(numero, pregunta["plantilla"])
     estados = cargar_json("estados.json")
     estados[numero] = "esperando_respuesta"
     guardar_json("estados.json", estados)
-    return jsonify({"ok": True, "mensaje": f"Pregunta enviada a {numero}"})
+    return jsonify({"ok": True})
 
 
 # ═══════════════════════════════════════════════════════

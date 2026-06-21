@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de gestión — Mercado de Predicciones</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: white;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .logo { font-size: 22px; }
+    header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+    header span { font-size: 13px; opacity: 0.5; margin-left: auto; }
+
+    main {
+      max-width: 860px;
+      margin: 32px auto;
+      padding: 0 20px;
+      display: grid;
+      gap: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #666;
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+      margin-top: 16px;
+    }
+    label:first-of-type { margin-top: 0; }
+
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #1a1a2e;
+      transition: border-color 0.2s;
+      background: #fafafa;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: #25d366;
+      background: white;
+    }
+    textarea { resize: vertical; min-height: 80px; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .tipo-opciones {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .tipo-btn {
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px 8px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #888;
+      transition: all 0.15s;
+      background: white;
+    }
+    .tipo-btn:hover { border-color: #25d366; color: #1a1a2e; }
+    .tipo-btn.activo { border-color: #25d366; background: #f0fff4; color: #1a1a2e; }
+    .tipo-btn .icon { font-size: 20px; display: block; margin-bottom: 4px; }
+
+    .rango { display: none; }
+    .rango.visible { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 6px;
+    }
+
+    button {
+      background: #25d366;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+      width: 100%;
+      margin-top: 20px;
+    }
+    button:hover { background: #1ebe5d; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    button.secundario {
+      background: white;
+      color: #1a1a2e;
+      border: 2px solid #e0e0e0;
+    }
+    button.secundario:hover { border-color: #aaa; background: #f5f5f5; }
+    button.peligro { background: #ff4757; }
+    button.peligro:hover { background: #e8394a; }
+
+    .dropzone {
+      border: 2px dashed #d0d0d0;
+      border-radius: 10px;
+      padding: 32px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #fafafa;
+    }
+    .dropzone:hover, .dropzone.drag { border-color: #25d366; background: #f0fff4; }
+    .dropzone .icon { font-size: 32px; margin-bottom: 8px; }
+    .dropzone p { font-size: 14px; color: #666; }
+    .dropzone strong { color: #25d366; }
+    #file-input { display: none; }
+
+    .numeros-preview {
+      margin-top: 16px;
+      background: #f8f8f8;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 13px;
+      color: #444;
+      display: none;
+    }
+    .numeros-preview.visible { display: block; }
+    .numeros-count { font-weight: 700; color: #25d366; font-size: 16px; }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1a1a2e;
+      color: white;
+      padding: 14px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 100;
+    }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.ok { background: #1a1a2e; }
+    .toast.error { background: #ff4757; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .stat {
+      background: #f8f8f8;
+      border-radius: 10px;
+      padding: 18px;
+      text-align: center;
+    }
+    .stat .num { font-size: 32px; font-weight: 800; color: #1a1a2e; }
+    .stat .etiq { font-size: 12px; color: #999; margin-top: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .votos-lista {
+      margin-top: 16px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .voto-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 13px;
+    }
+    .voto-item:last-child { border-bottom: none; }
+    .voto-resp {
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: #f0fff4;
+      color: #1ebe5d;
+    }
+    .voto-hora { color: #aaa; font-size: 12px; }
+
+    .preview-whatsapp {
+      background: #e5ddd5;
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .burbuja {
+      background: white;
+      border-radius: 8px;
+      padding: 12px 14px;
+      max-width: 280px;
+      font-size: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    .burbuja p { margin-bottom: 10px; line-height: 1.4; }
+    .burbuja-btn {
+      border-top: 1px solid #f0f0f0;
+      padding: 8px 0 0;
+      color: #0a9edf;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+    }
+    .burbuja-btn + .burbuja-btn { border-top: 1px solid #f0f0f0; padding-top: 8px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">📊</span>
+  <h1>Mercado de Predicciones — Panel de gestión</h1>
+  <span id="hora-actual"></span>
+</header>
+
+<main>
+
+  <!-- STATS -->
+  <div class="card">
+    <h2>Resumen actual</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="num" id="stat-total">—</div>
+        <div class="etiq">Votos totales</div>
+      </div>
+      <div class="stat">
+        <div class="num" id="stat-si">—</div>
+        <div class="etiq">Respuestas SÍ</div>
+      </div>
+      <div class="stat">
+        <div class="num" id="stat-no">—</div>
+        <div class="etiq">Respuestas NO</div>
+      </div>
+    </div>
+    <div class="votos-lista" id="votos-lista"></div>
+  </div>
+
+  <!-- CONFIGURAR PREGUNTA -->
+  <div class="card">
+    <h2>Configurar pregunta</h2>
+
+    <label>Texto de la pregunta</label>
+    <textarea id="pregunta-texto" placeholder="¿Crees que subirá el PIB en 2027?"></textarea>
+
+    <label>Nombre de la plantilla en Meta</label>
+    <input type="text" id="pregunta-plantilla" placeholder="pregunta">
+    <p class="hint">Debe coincidir exactamente con el nombre aprobado en Meta for Developers.</p>
+
+    <label>Tipo de respuesta</label>
+    <div class="tipo-opciones">
+      <div class="tipo-btn activo" data-tipo="sino" onclick="selTipo('sino')">
+        <span class="icon">✅</span>SÍ / NO
+      </div>
+      <div class="tipo-btn" data-tipo="porcentaje" onclick="selTipo('porcentaje')">
+        <span class="icon">📈</span>Porcentaje
+      </div>
+      <div class="tipo-btn" data-tipo="numero" onclick="selTipo('numero')">
+        <span class="icon">🔢</span>Número
+      </div>
+    </div>
+
+    <div class="rango" id="rango">
+      <div>
+        <label>Valor mínimo</label>
+        <input type="number" id="rango-min" placeholder="0">
+      </div>
+      <div>
+        <label>Valor máximo</label>
+        <input type="number" id="rango-max" placeholder="100">
+      </div>
+    </div>
+
+    <label style="margin-top:20px">Vista previa en WhatsApp</label>
+    <div class="preview-whatsapp">
+      <div class="burbuja">
+        <p id="preview-texto">¿Crees que subirá el PIB en 2027?</p>
+        <div id="preview-botones">
+          <div class="burbuja-btn">↩ Sí</div>
+          <div class="burbuja-btn">↩ No</div>
+        </div>
+      </div>
+    </div>
+
+    <button onclick="guardarPregunta()">Guardar pregunta</button>
+  </div>
+
+  <!-- ENVIAR A LISTA -->
+  <div class="card">
+    <h2>Enviar pregunta</h2>
+
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+      <div class="icon">📂</div>
+      <p>Arrastra aquí el CSV o Excel con los números<br><strong>o haz clic para seleccionar</strong></p>
+      <p style="margin-top:8px; font-size:12px; color:#bbb">El archivo debe tener una columna con los números de teléfono (con prefijo país, sin +)</p>
+    </div>
+    <input type="file" id="file-input" accept=".csv,.xlsx,.xls" onchange="procesarArchivo(this.files[0])">
+
+    <div class="numeros-preview" id="numeros-preview">
+      <span class="numeros-count" id="numeros-count">0</span> números cargados
+      <span id="numeros-muestra" style="color:#aaa; font-size:12px; margin-left:8px;"></span>
+    </div>
+
+    <button id="btn-enviar" onclick="enviarPregunta()" disabled>Enviar pregunta a todos</button>
+    <button class="secundario" onclick="resetearTodo()" style="margin-top:10px">🗑 Resetear todos los votos</button>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+
+let tipoActual = "sino";
+let numerosLista = [];
+
+// ── Hora ──
+function actualizarHora() {
+  document.getElementById("hora-actual").textContent =
+    new Date().toLocaleTimeString("es-ES", {hour:"2-digit", minute:"2-digit"});
+}
+actualizarHora();
+setInterval(actualizarHora, 60000);
+
+// ── Tipo de pregunta ──
+function selTipo(tipo) {
+  tipoActual = tipo;
+  document.querySelectorAll(".tipo-btn").forEach(b => b.classList.remove("activo"));
+  document.querySelector(`[data-tipo="${tipo}"]`).classList.add("activo");
+  const rango = document.getElementById("rango");
+  if (tipo === "sino") {
+    rango.classList.remove("visible");
+  } else {
+    rango.classList.add("visible");
+  }
+  actualizarPreview();
+}
+
+// ── Preview WhatsApp ──
+document.getElementById("pregunta-texto").addEventListener("input", actualizarPreview);
+
+function actualizarPreview() {
+  const texto = document.getElementById("pregunta-texto").value || "Tu pregunta aparecerá aquí";
+  document.getElementById("preview-texto").textContent = texto;
+
+  const bots = document.getElementById("preview-botones");
+  if (tipoActual === "sino") {
+    bots.innerHTML = `<div class="burbuja-btn">↩ Sí</div><div class="burbuja-btn">↩ No</div>`;
+  } else if (tipoActual === "porcentaje") {
+    bots.innerHTML = `<div style="font-size:12px;color:#aaa;padding-top:6px">Responde con un número (ej: 3.5)</div>`;
+  } else {
+    bots.innerHTML = `<div style="font-size:12px;color:#aaa;padding-top:6px">Responde con un número</div>`;
+  }
+}
+
+// ── Cargar pregunta actual ──
+async function cargarPregunta() {
+  try {
+    const r = await fetch("/api/pregunta");
+    const p = await r.json();
+    document.getElementById("pregunta-texto").value    = p.texto || "";
+    document.getElementById("pregunta-plantilla").value = p.plantilla || "pregunta";
+    if (p.tipo) selTipo(p.tipo);
+    if (p.min !== null && p.min !== undefined) document.getElementById("rango-min").value = p.min;
+    if (p.max !== null && p.max !== undefined) document.getElementById("rango-max").value = p.max;
+    actualizarPreview();
+  } catch(e) { console.error(e); }
+}
+
+// ── Guardar pregunta ──
+async function guardarPregunta() {
+  const body = {
+    texto:     document.getElementById("pregunta-texto").value.trim(),
+    plantilla: document.getElementById("pregunta-plantilla").value.trim(),
+    tipo:      tipoActual,
+    min:       tipoActual !== "sino" ? parseFloat(document.getElementById("rango-min").value) || null : null,
+    max:       tipoActual !== "sino" ? parseFloat(document.getElementById("rango-max").value) || null : null,
+  };
+  if (!body.texto) { toast("Escribe el texto de la pregunta", "error"); return; }
+  if (!body.plantilla) { toast("Escribe el nombre de la plantilla", "error"); return; }
+
+  const r = await fetch("/api/pregunta", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (d.ok) toast("Pregunta guardada ✓");
+  else toast("Error al guardar", "error");
+}
+
+// ── Procesar archivo CSV/Excel ──
+function procesarArchivo(file) {
+  if (!file) return;
+  const ext = file.name.split(".").pop().toLowerCase();
+
+  if (ext === "csv") {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const lineas = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      extraerNumeros(lineas);
+    };
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb   = XLSX.read(e.target.result, {type:"array"});
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1});
+      const vals = rows.flat().map(v => String(v).trim()).filter(Boolean);
+      extraerNumeros(vals);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function extraerNumeros(vals) {
+  // Filtra solo los que parecen números de teléfono (8+ dígitos)
+  numerosLista = vals
+    .map(v => v.replace(/[\s\-\+\.]/g, ""))
+    .filter(v => /^\d{8,15}$/.test(v));
+
+  const prev = document.getElementById("numeros-preview");
+  const count = document.getElementById("numeros-count");
+  const muestra = document.getElementById("numeros-muestra");
+
+  prev.classList.add("visible");
+  count.textContent = numerosLista.length;
+
+  if (numerosLista.length > 0) {
+    const ejs = numerosLista.slice(0,3).map(n => "···" + n.slice(-4)).join(", ");
+    muestra.textContent = `(ej: ${ejs}${numerosLista.length > 3 ? "..." : ""})`;
+    document.getElementById("btn-enviar").disabled = false;
+  } else {
+    muestra.textContent = "No se encontraron números válidos";
+    document.getElementById("btn-enviar").disabled = true;
+  }
+}
+
+// Drag & drop
+const dz = document.getElementById("dropzone");
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+dz.addEventListener("drop", e => {
+  e.preventDefault();
+  dz.classList.remove("drag");
+  const file = e.dataTransfer.files[0];
+  if (file) procesarArchivo(file);
+});
+
+// ── Enviar pregunta ──
+async function enviarPregunta() {
+  if (!numerosLista.length) { toast("Carga un archivo primero", "error"); return; }
+  const btn = document.getElementById("btn-enviar");
+  btn.disabled = true;
+  btn.textContent = "Enviando...";
+
+  try {
+    const r = await fetch("/api/enviar", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ numeros: numerosLista })
+    });
+    const d = await r.json();
+    toast(`✓ Enviado a ${d.enviados} número${d.enviados !== 1 ? "s" : ""}`);
+    cargarVotos();
+  } catch(e) {
+    toast("Error al enviar", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Enviar pregunta a todos";
+  }
+}
+
+// ── Votos ──
+async function cargarVotos() {
+  try {
+    const r = await fetch("/api/votos");
+    const d = await r.json();
+    const votos = d.votos || {};
+    const lista = Object.entries(votos);
+
+    document.getElementById("stat-total").textContent = lista.length;
+
+    const si  = lista.filter(([,v]) => v.respuesta === "SÍ").length;
+    const no  = lista.filter(([,v]) => v.respuesta === "NO").length;
+    document.getElementById("stat-si").textContent  = si  || "—";
+    document.getElementById("stat-no").textContent  = no  || "—";
+
+    const contenedor = document.getElementById("votos-lista");
+    if (lista.length === 0) {
+      contenedor.innerHTML = `<p style="color:#bbb;font-size:13px;padding:12px 0">Sin votos aún</p>`;
+      return;
+    }
+    contenedor.innerHTML = lista.slice(-10).reverse().map(([num, v]) => `
+      <div class="voto-item">
+        <span>···${num.slice(-4)}</span>
+        <span class="voto-resp">${v.respuesta}</span>
+        <span class="voto-hora">${v.hora}</span>
+      </div>
+    `).join("");
+  } catch(e) { console.error(e); }
+}
+
+// ── Resetear ──
+async function resetearTodo() {
+  if (!confirm("¿Seguro que quieres borrar todos los votos y estados?")) return;
+  const r = await fetch("/api/resetear", { method: "POST" });
+  const d = await r.json();
+  if (d.ok) { toast("Todo reseteado"); cargarVotos(); }
+}
+
+// ── Toast ──
+function toast(msg, tipo = "ok") {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = `toast ${tipo} visible`;
+  setTimeout(() => t.classList.remove("visible"), 3000);
+}
+
+// ── Init ──
+cargarPregunta();
+cargarVotos();
+setInterval(cargarVotos, 10000);
+
+</script>
+</body>
+</html>
