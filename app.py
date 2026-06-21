@@ -6,69 +6,116 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-VERIFY_TOKEN   = os.environ.get("VERIFY_TOKEN", "mi_token_secreto_123")
-WA_TOKEN       = os.environ.get("WA_TOKEN", "")        # Token de Meta
-WA_PHONE_ID    = os.environ.get("WA_PHONE_ID", "")     # ID del número en Meta
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "mi_token_secreto_123")
+WA_TOKEN     = os.environ.get("WA_TOKEN", "")
+WA_PHONE_ID  = os.environ.get("WA_PHONE_ID", "")
 
 
 # ═══════════════════════════════════════════════════════
 # PREGUNTA ACTIVA
-# Define aquí la pregunta actual y su tipo de validación
 # ═══════════════════════════════════════════════════════
 
 PREGUNTA_ACTIVA = {
-    "texto": "¿Crees que subirá el PIB español en 2026?",
-    "tipo": "sino",       # Opciones: "sino", "porcentaje", "numero"
-    "min": None,          # Solo para tipo "numero" o "porcentaje"
-    "max": None,          # Solo para tipo "numero" o "porcentaje"
+    "texto": "¿Crees que subirá el PIB en 2027?",
+    "tipo": "sino",
+    "plantilla": "pregunta",   # Nombre de la plantilla en Meta
+    "min": None,
+    "max": None,
 }
 
-# Ejemplos de otros tipos:
-# {"texto": "¿Qué % crees que crecerá el PIB?", "tipo": "porcentaje", "min": -10, "max": 10}
-# {"texto": "¿Cuántos empleos se crearán (en miles)?", "tipo": "numero", "min": 0, "max": 500}
-
 
 # ═══════════════════════════════════════════════════════
-# ESTADOS DE CONVERSACIÓN
-# Guarda en qué punto está cada empresario
+# ESTADOS Y VOTOS
 # ═══════════════════════════════════════════════════════
 
-def cargar_estados():
+def cargar_json(fichero):
     try:
-        with open("estados.json", "r") as f:
+        with open(fichero, "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-def guardar_estados(estados):
-    with open("estados.json", "w") as f:
-        json.dump(estados, f, indent=2, ensure_ascii=False)
-
-
-# ═══════════════════════════════════════════════════════
-# VOTOS
-# ═══════════════════════════════════════════════════════
-
-def cargar_votos():
-    try:
-        with open("votos.json", "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+def guardar_json(fichero, datos):
+    with open(fichero, "w") as f:
+        json.dump(datos, f, indent=2, ensure_ascii=False)
 
 def guardar_voto(numero, respuesta):
-    votos = cargar_votos()
+    votos = cargar_json("votos.json")
     votos[numero] = {
         "respuesta": respuesta,
         "hora": datetime.now().strftime("%H:%M %d/%m/%Y")
     }
-    with open("votos.json", "w") as f:
-        json.dump(votos, f, indent=2, ensure_ascii=False)
+    guardar_json("votos.json", votos)
     print(f"✅ Voto guardado: {numero} → {respuesta}")
 
 
 # ═══════════════════════════════════════════════════════
-# VALIDACIÓN DE RESPUESTAS
+# ENVIAR MENSAJES
+# ═══════════════════════════════════════════════════════
+
+def enviar_texto(numero, texto):
+    if not WA_TOKEN or not WA_PHONE_ID:
+        print(f"⚠️  Sin credenciales. Mensaje: {texto}")
+        return
+    url = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
+    headers = {"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"}
+    body = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "text",
+        "text": {"body": texto}
+    }
+    r = requests.post(url, headers=headers, json=body)
+    print(f"📤 Texto enviado a {numero}: {r.status_code}")
+
+def enviar_plantilla(numero, nombre_plantilla):
+    if not WA_TOKEN or not WA_PHONE_ID:
+        print(f"⚠️  Sin credenciales. Plantilla: {nombre_plantilla}")
+        return
+    url = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
+    headers = {"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"}
+    body = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "template",
+        "template": {
+            "name": nombre_plantilla,
+            "language": {"code": "es"}
+        }
+    }
+    r = requests.post(url, headers=headers, json=body)
+    print(f"📤 Plantilla '{nombre_plantilla}' enviada a {numero}: {r.status_code}")
+
+def enviar_botones_cambiar(numero, respuesta_actual):
+    """Envía botones Sí/No para confirmar si quiere cambiar su respuesta"""
+    if not WA_TOKEN or not WA_PHONE_ID:
+        print("⚠️  Sin credenciales para botones")
+        return
+    url = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
+    headers = {"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"}
+    body = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": f"✅ Tu respuesta *{respuesta_actual}* ha sido registrada.\n\n¿Quieres cambiarla?"
+            },
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "cambiar_si", "title": "Sí, cambiar"}},
+                    {"type": "reply", "reply": {"id": "cambiar_no", "title": "No, mantener"}}
+                ]
+            }
+        }
+    }
+    r = requests.post(url, headers=headers, json=body)
+    print(f"📤 Botones cambiar enviados a {numero}: {r.status_code}")
+
+
+# ═══════════════════════════════════════════════════════
+# VALIDACIÓN
 # ═══════════════════════════════════════════════════════
 
 def validar_respuesta(texto, pregunta):
@@ -77,7 +124,7 @@ def validar_respuesta(texto, pregunta):
 
     if tipo == "sino":
         if texto in ["SI", "SÍ", "S", "NO", "N"]:
-            return True, normalizar_sino(texto)
+            return True, "SÍ" if texto in ["SI", "SÍ", "S"] else "NO"
         return False, None
 
     if tipo == "porcentaje":
@@ -106,114 +153,95 @@ def validar_respuesta(texto, pregunta):
 
     return False, None
 
-def normalizar_sino(texto):
-    return "SÍ" if texto in ["SI", "SÍ", "S"] else "NO"
-
 def mensaje_formato(pregunta):
     tipo = pregunta["tipo"]
     if tipo == "sino":
         return "Responde *SÍ* o *NO*"
     if tipo == "porcentaje":
-        mn = pregunta.get("min", 0)
-        mx = pregunta.get("max", 100)
-        return f"Responde con un porcentaje entre {mn}% y {mx}% (ejemplo: 3.5)"
+        return f"Responde con un porcentaje entre {pregunta.get('min', 0)}% y {pregunta.get('max', 100)}%"
     if tipo == "numero":
-        mn = pregunta.get("min")
-        mx = pregunta.get("max")
+        mn, mx = pregunta.get("min"), pregunta.get("max")
         if mn is not None and mx is not None:
             return f"Responde con un número entre {mn} y {mx}"
         return "Responde con un número"
 
 
 # ═══════════════════════════════════════════════════════
-# ENVIAR MENSAJE
+# LÓGICA DE CONVERSACIÓN
 # ═══════════════════════════════════════════════════════
 
-def enviar_mensaje(numero, texto):
-    if not WA_TOKEN or not WA_PHONE_ID:
-        print(f"⚠️  Sin credenciales. Mensaje que se enviaría a {numero}: {texto}")
+def procesar_mensaje(numero, texto=None, button_id=None):
+    estados = cargar_json("estados.json")
+    estado  = estados.get(numero, "esperando_respuesta")
+
+    print(f"📊 Estado de {numero}: {estado} | texto: {texto} | button_id: {button_id}")
+
+    # ── Respuesta via botón de la plantilla (Sí / No) ──
+    if button_id in ["si", "no", "sí"] or (texto and texto.upper() in ["SÍ", "SI", "NO"]):
+
+        if estado in ["esperando_respuesta", "esperando_cambio"]:
+            # Determinar valor desde botón o texto
+            if button_id:
+                valor = "SÍ" if button_id in ["si", "sí"] else "NO"
+            else:
+                valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
+                if not valido:
+                    enviar_texto(numero, f"❌ Respuesta no válida.\n\n{mensaje_formato(PREGUNTA_ACTIVA)}")
+                    return
+
+            guardar_voto(numero, valor)
+            estados[numero] = "confirmado"
+            guardar_json("estados.json", estados)
+            enviar_botones_cambiar(numero, valor)
+            return
+
+    # ── Botón de cambiar respuesta ──
+    if button_id == "cambiar_si":
+        estados[numero] = "esperando_cambio"
+        guardar_json("estados.json", estados)
+        enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
         return
 
-    url = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WA_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    body = {
-        "messaging_product": "whatsapp",
-        "to": numero,
-        "type": "text",
-        "text": {"body": texto}
-    }
-    r = requests.post(url, headers=headers, json=body)
-    print(f"📤 Mensaje enviado a {numero}: {r.status_code}")
+    if button_id == "cambiar_no":
+        enviar_texto(numero, "👍 Tu voto se mantiene. ¡Gracias por participar!")
+        return
 
-
-# ═══════════════════════════════════════════════════════
-# LÓGICA PRINCIPAL DE CONVERSACIÓN
-# ═══════════════════════════════════════════════════════
-
-def procesar_mensaje(numero, texto):
-    estados = cargar_estados()
-    estado  = estados.get(numero, "esperando_respuesta")
-    texto_u = texto.strip().upper()
-
-    print(f"📊 Estado actual de {numero}: {estado}")
-
-    # ── Esperando respuesta inicial ──
+    # ── Estado: esperando respuesta (texto libre) ──
     if estado == "esperando_respuesta":
         valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
-
         if not valido:
-            enviar_mensaje(numero,
+            enviar_texto(numero,
                 f"❌ Respuesta no válida.\n\n"
                 f"{PREGUNTA_ACTIVA['texto']}\n\n"
                 f"{mensaje_formato(PREGUNTA_ACTIVA)}"
             )
             return
-
         guardar_voto(numero, valor)
         estados[numero] = "confirmado"
-        guardar_estados(estados)
+        guardar_json("estados.json", estados)
+        enviar_botones_cambiar(numero, valor)
 
-        enviar_mensaje(numero,
-            f"✅ ¡Gracias! Tu respuesta *{valor}* ha sido registrada.\n\n"
-            f"Si quieres cambiarla, escribe *CAMBIAR*."
-        )
-
-    # ── Ya confirmado, esperando si quiere cambiar ──
+    # ── Estado: confirmado, escribe CAMBIAR ──
     elif estado == "confirmado":
-        if texto_u == "CAMBIAR":
+        if texto and texto.strip().upper() == "CAMBIAR":
             estados[numero] = "esperando_cambio"
-            guardar_estados(estados)
-            enviar_mensaje(numero,
-                f"De acuerdo. Dime tu nueva respuesta.\n\n"
-                f"{PREGUNTA_ACTIVA['texto']}\n\n"
-                f"{mensaje_formato(PREGUNTA_ACTIVA)}"
-            )
+            guardar_json("estados.json", estados)
+            enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
         else:
-            enviar_mensaje(numero,
-                "Tu voto ya está registrado. Si quieres cambiarlo, escribe *CAMBIAR*."
-            )
+            enviar_texto(numero, "Tu voto ya está registrado. Escribe *CAMBIAR* si quieres modificarlo.")
 
-    # ── Esperando nueva respuesta tras CAMBIAR ──
+    # ── Estado: esperando cambio (texto libre) ──
     elif estado == "esperando_cambio":
-        valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
-
-        if not valido:
-            enviar_mensaje(numero,
-                f"❌ Respuesta no válida.\n\n"
-                f"{mensaje_formato(PREGUNTA_ACTIVA)}"
-            )
+        if not texto:
             return
-
+        valido, valor = validar_respuesta(texto, PREGUNTA_ACTIVA)
+        if not valido:
+            enviar_texto(numero, f"❌ Respuesta no válida.\n\n{mensaje_formato(PREGUNTA_ACTIVA)}")
+            return
         guardar_voto(numero, valor)
         estados[numero] = "confirmado"
-        guardar_estados(estados)
-
-        enviar_mensaje(numero,
-            f"✅ ¡Perfecto! Tu nueva respuesta *{valor}* ha sido registrada."
-        )
+        guardar_json("estados.json", estados)
+        enviar_botones_cambiar(numero, valor)
 
 
 # ═══════════════════════════════════════════════════════
@@ -234,19 +262,23 @@ def webhook():
 
     if request.method == "POST":
         data = request.json
-        print(f"\n📩 Payload recibido: {json.dumps(data, indent=2)}")
+        print(f"\n📩 Payload: {json.dumps(data, indent=2)}")
 
         try:
             value = data["entry"][0]["changes"][0]["value"]
             if "messages" in value:
-                mensaje = value["messages"][0]
-                numero  = mensaje["from"]
-                tipo    = mensaje["type"]
+                mensaje   = value["messages"][0]
+                numero    = mensaje["from"]
+                tipo      = mensaje["type"]
 
                 if tipo == "text":
                     texto = mensaje["text"]["body"]
-                    print(f"📱 De: {numero} | Texto: '{texto}'")
-                    procesar_mensaje(numero, texto)
+                    procesar_mensaje(numero, texto=texto)
+
+                elif tipo == "interactive":
+                    # Respuesta a botón
+                    button_id = mensaje["interactive"]["button_reply"]["id"]
+                    procesar_mensaje(numero, button_id=button_id)
 
         except (KeyError, IndexError) as e:
             print(f"⚠️  Error: {e}")
@@ -255,25 +287,36 @@ def webhook():
 
 
 # ═══════════════════════════════════════════════════════
-# ENDPOINTS DE CONSULTA
+# ENDPOINTS
 # ═══════════════════════════════════════════════════════
 
 @app.route("/votos", methods=["GET"])
 def ver_votos():
-    votos = cargar_votos()
+    votos = cargar_json("votos.json")
     return jsonify({"total": len(votos), "votos": votos})
 
 @app.route("/estados", methods=["GET"])
 def ver_estados():
-    return jsonify(cargar_estados())
+    return jsonify(cargar_json("estados.json"))
 
 @app.route("/resetear/<numero>", methods=["GET"])
 def resetear_usuario(numero):
-    estados = cargar_estados()
-    if numero in estados:
-        del estados[numero]
-        guardar_estados(estados)
+    estados = cargar_json("estados.json")
+    votos   = cargar_json("votos.json")
+    estados.pop(numero, None)
+    votos.pop(numero, None)
+    guardar_json("estados.json", estados)
+    guardar_json("votos.json", votos)
     return jsonify({"ok": True, "mensaje": f"{numero} reseteado"})
+
+@app.route("/enviar/<numero>", methods=["GET"])
+def enviar_pregunta(numero):
+    """Envía la pregunta manualmente a un número"""
+    enviar_plantilla(numero, PREGUNTA_ACTIVA["plantilla"])
+    estados = cargar_json("estados.json")
+    estados[numero] = "esperando_respuesta"
+    guardar_json("estados.json", estados)
+    return jsonify({"ok": True, "mensaje": f"Pregunta enviada a {numero}"})
 
 
 # ═══════════════════════════════════════════════════════
