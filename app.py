@@ -209,10 +209,10 @@ def procesar_mensaje(numero, texto=None, button_id=None):
         return
 
     # ── Botón de la plantilla (Sí / No) ──
-    # Meta envía el TÍTULO del botón como button_id cuando viene de plantilla
+    # Meta envía type "button" con text "Sí" o "No" (con tildes, minúsculas)
     if button_id is not None:
-        titulo = button_id.strip().upper()
-        es_si = titulo in ["SÍ", "SI", "S", "SÍ", "YES"]
+        titulo = button_id.strip().upper().replace("Í", "I").replace("É", "E").replace("Á", "A")
+        es_si = titulo in ["SI", "S", "YES"]
         es_no = titulo in ["NO", "N"]
 
         if (es_si or es_no) and estado in ["esperando_respuesta", "esperando_cambio"]:
@@ -289,16 +289,21 @@ def webhook():
                 if tipo == "text":
                     procesar_mensaje(numero, texto=mensaje["text"]["body"])
 
+                elif tipo == "button":
+                    # Respuesta a botón de plantilla — llega como type "button"
+                    btn_text = mensaje["button"].get("text", "")
+                    btn_payload = mensaje["button"].get("payload", "")
+                    print(f"🔘 Button plantilla — text: '{btn_text}' | payload: '{btn_payload}'")
+                    procesar_mensaje(numero, button_id=btn_text or btn_payload)
+
                 elif tipo == "interactive":
                     inter = mensaje["interactive"]
                     print(f"🔘 Interactive completo: {json.dumps(inter, indent=2)}")
 
                     if "button_reply" in inter:
-                        # button_reply tiene id y title
                         btn_id    = inter["button_reply"].get("id", "")
                         btn_title = inter["button_reply"].get("title", "")
                         print(f"🔘 Button ID: '{btn_id}' | Title: '{btn_title}'")
-                        # Usamos el id primero, si no el título
                         procesar_mensaje(numero, button_id=btn_id or btn_title)
 
         except (KeyError, IndexError) as e:
