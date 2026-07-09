@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CECO Opinion — Resultados</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1923;
+      color: #c8daea;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #1a2533;
+      border-bottom: 1px solid #263346;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand { font-size: 18px; font-weight: 800; color: white; }
+    .brand span { color: #00c896; }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #00c896;
+      animation: pulse 1.5s infinite;
+      margin-left: auto;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .live-label { font-size: 12px; color: #00c896; font-weight: 600; margin-left: 6px; }
+
+    main { max-width: 700px; margin: 40px auto; padding: 0 20px; flex: 1; width: 100%; }
+
+    .pregunta-card {
+      background: #1a2533;
+      border: 1px solid #263346;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .pregunta-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #5a7a9a;
+      margin-bottom: 16px;
+    }
+    .pregunta-texto {
+      font-size: 22px;
+      font-weight: 700;
+      color: white;
+      line-height: 1.4;
+      letter-spacing: -0.3px;
+    }
+    .estado-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .badge-activa { background: #0f2a1f; color: #00c896; }
+    .badge-cerrada { background: #2a1f0f; color: #ffa502; }
+    .cierre-txt { font-size: 13px; color: #5a7a9a; }
+
+    .resultados-card {
+      background: #1a2533;
+      border: 1px solid #263346;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+    }
+    .total-txt {
+      font-size: 13px;
+      color: #5a7a9a;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .total-txt strong { color: #00c896; font-size: 18px; }
+
+    .barra-item { margin-bottom: 20px; }
+    .barra-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .barra-label { font-size: 15px; font-weight: 700; color: white; }
+    .barra-pct { font-size: 15px; font-weight: 800; color: #00c896; }
+    .barra-track {
+      height: 12px;
+      background: #0f1923;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .barra-fill {
+      height: 100%;
+      border-radius: 8px;
+      transition: width 0.8s cubic-bezier(.4,0,.2,1);
+    }
+    .color-0 { background: linear-gradient(90deg, #00c896, #0099ff); }
+    .color-1 { background: linear-gradient(90deg, #ff6b6b, #ff4757); }
+    .color-2 { background: linear-gradient(90deg, #ffa502, #ff6348); }
+    .color-3 { background: linear-gradient(90deg, #7bed9f, #2ed573); }
+    .barra-votos { font-size: 12px; color: #5a7a9a; margin-top: 4px; }
+
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: #5a7a9a;
+    }
+    .empty .icon { font-size: 40px; margin-bottom: 12px; }
+    .empty p { font-size: 14px; }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      color: #3a5a7a;
+      font-size: 12px;
+      border-top: 1px solid #1a2533;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">CECO <span>Opinion</span></div>
+  <div class="live-dot" id="live-dot"></div>
+  <span class="live-label" id="live-label">En directo</span>
+</header>
+
+<main>
+  <div class="pregunta-card">
+    <div class="pregunta-label">Pregunta activa</div>
+    <div class="pregunta-texto" id="pregunta-texto">Cargando...</div>
+    <div class="estado-row">
+      <div class="badge" id="badge-estado">...</div>
+      <span class="cierre-txt" id="cierre-txt"></span>
+    </div>
+  </div>
+
+  <div class="resultados-card">
+    <div class="total-txt">
+      Han respondido <strong id="total-num">0</strong> empresarios
+    </div>
+    <div id="barras-container">
+      <div class="empty">
+        <div class="icon">📊</div>
+        <p>Aún no hay respuestas</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>Los resultados son anónimos · Se actualizan automáticamente</footer>
+
+<script>
+async function cargar() {
+  try {
+    const r = await fetch("/api/resultados");
+    const d = await r.json();
+
+    document.getElementById("pregunta-texto").textContent = d.pregunta || "Sin pregunta activa";
+
+    const badge = document.getElementById("badge-estado");
+    badge.textContent = d.activa ? "🟢 Encuesta abierta" : "🔴 Encuesta cerrada";
+    badge.className = "badge " + (d.activa ? "badge-activa" : "badge-cerrada");
+
+    const liveDot = document.getElementById("live-dot");
+    const liveLabel = document.getElementById("live-label");
+    liveDot.style.background = d.activa ? "#00c896" : "#ffa502";
+    liveLabel.textContent = d.activa ? "En directo" : "Cerrada";
+    liveLabel.style.color = d.activa ? "#00c896" : "#ffa502";
+
+    if (d.cierre) {
+      const fecha = new Date(d.cierre).toLocaleString("es-ES", {day:"2-digit",month:"long",hour:"2-digit",minute:"2-digit"});
+      document.getElementById("cierre-txt").textContent = d.activa ? `Cierra el ${fecha}` : `Cerró el ${fecha}`;
+    }
+
+    document.getElementById("total-num").textContent = d.total;
+
+    const contenedor = document.getElementById("barras-container");
+    const conteo = d.conteo || {};
+    const entradas = Object.entries(conteo).sort((a,b) => b[1]-a[1]);
+
+    if (entradas.length === 0) {
+      contenedor.innerHTML = `<div class="empty"><div class="icon">📊</div><p>Aún no hay respuestas</p></div>`;
+      return;
+    }
+
+    const maxVal = Math.max(...entradas.map(([,v])=>v));
+    contenedor.innerHTML = entradas.map(([resp, votos], i) => {
+      const pct = d.total > 0 ? Math.round(votos / d.total * 100) : 0;
+      return `
+        <div class="barra-item">
+          <div class="barra-header">
+            <span class="barra-label">${resp}</span>
+            <span class="barra-pct">${pct}%</span>
+          </div>
+          <div class="barra-track">
+            <div class="barra-fill color-${i%4}" style="width:${pct}%"></div>
+          </div>
+          <div class="barra-votos">${votos} voto${votos!==1?"s":""}</div>
+        </div>
+      `;
+    }).join("");
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+cargar();
+setInterval(cargar, 5000);
+</script>
+</body>
+</html>

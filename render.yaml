@@ -6,4 +6,16 @@ services:
     startCommand: gunicorn app:app
     envVars:
       - key: VERIFY_TOKEN
-        value: mi_token_secreto_123
+        sync: false
+      - key: WA_TOKEN
+        sync: false
+      - key: WA_PHONE_ID
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CECO_USER
+        sync: false
+      - key: CECO_PASS
+        sync: false
+      - key: RESULTADOS_URL
+        value: https://tfgdatos.onrender.com/resultados
