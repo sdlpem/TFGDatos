@@ -104,7 +104,7 @@ def enviar_plantilla(numero, encuesta):
         json={
             "messaging_product": "whatsapp", "to": numero,
             "type": "template",
-            "template": {"name": nombre, "language": {"code": "es"}, "components": componentes}
+            "template": {"name": nombre, "language": {"code": "es_ES"}, "components": componentes}
         }
     )
     print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code} {r.text}")
