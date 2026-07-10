@@ -90,17 +90,19 @@ def enviar_texto(numero, texto):
 def enviar_plantilla(numero, encuesta):
     if not WA_TOKEN or not WA_PHONE_ID:
         print("⚠️ Sin creds plantilla"); return
-    tipo = encuesta.get("tipo", "sino")
-    if tipo == "sino":
-        nombre = encuesta.get("plantilla_sino", "pregunta_sino")
-        componentes = [{"type": "body", "parameters": [{"type": "text", "text": encuesta["texto"]}]}]
-    else:
-        nombre = encuesta.get("plantilla_abierta", "pregunta_abierta")
-        instrucciones = formato_instrucciones(encuesta)
-        componentes = [{"type": "body", "parameters": [
-            {"type": "text", "text": encuesta["texto"]},
-            {"type": "text", "text": instrucciones}
-        ]}]
+
+    tipo   = encuesta.get("tipo", "sino")
+    nombre = encuesta.get("plantilla_sino", "plantilla_dinamica") if tipo == "sino" else encuesta.get("plantilla_abierta", "plantilla_dinamica")
+    formato = "Responda con SÍ o NO" if tipo == "sino" else formato_instrucciones(encuesta)
+
+    componentes = [{
+        "type": "body",
+        "parameters": [
+            {"type": "text", "parameter_name": "pregunta",          "text": encuesta["texto"]},
+            {"type": "text", "parameter_name": "formato_respuesta", "text": formato}
+        ]
+    }]
+
     r = requests.post(
         f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
         headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
@@ -110,7 +112,7 @@ def enviar_plantilla(numero, encuesta):
             "template": {"name": nombre, "language": {"code": "es"}, "components": componentes}
         }
     )
-    print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code}")
+    print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code} {r.text}")
 
 def enviar_confirmacion(numero, valor):
     """Mensaje tras votar: resultado + link de resultados"""
