@@ -93,8 +93,8 @@ def enviar_plantilla(numero, encuesta):
     componentes = [{
         "type": "body",
         "parameters": [
-            {"type": "text", "parameter_name": "pregunta",          "text": encuesta["texto"]},
-            {"type": "text", "parameter_name": "formato_respuesta", "text": formato}
+            {"type": "text", "text": encuesta["texto"]},
+            {"type": "text", "text": formato}
         ]
     }]
 
@@ -104,7 +104,7 @@ def enviar_plantilla(numero, encuesta):
         json={
             "messaging_product": "whatsapp", "to": numero,
             "type": "template",
-            "template": {"name": nombre, "language": {"code": "es_ES"}, "components": componentes}
+            "template": {"name": nombre, "language": {"code": "es"}, "components": componentes}
         }
     )
     print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code} {r.text}")
@@ -327,8 +327,8 @@ def api_set_encuesta():
     encuesta = {
         "texto":    d.get("texto",""),
         "tipo":     d.get("tipo","sino"),
-        "plantilla_sino":     d.get("plantilla_sino", "pregunta_sino"),
-        "plantilla_abierta":  d.get("plantilla_abierta", "pregunta_abierta"),
+        "plantilla_sino":     d.get("plantilla_sino", "plantilla_dinamica"),
+        "plantilla_abierta":  d.get("plantilla_abierta", "plantilla_dinamica"),
         "min":      d.get("min"),
         "max":      d.get("max"),
         "cierre":   d.get("cierre"),
