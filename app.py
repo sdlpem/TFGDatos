@@ -33,15 +33,10 @@ def guardar_json(f, d):
 def cargar_encuesta():
     e = cargar_json("encuesta.json")
     if not e:
-        return {
-            "texto": "",
-            "tipo": "sino",
-            "plantilla_sino": os.environ.get("PLANTILLA_SINO", "pregunta_sino"),
-            "plantilla_abierta": os.environ.get("PLANTILLA_ABIERTA", "pregunta_abierta"),
-            "min": None, "max": None,
-            "cierre": None,
-            "activa": False
-        }
+        e = {"texto": "", "tipo": "sino", "min": None, "max": None, "cierre": None, "activa": False}
+    # Siempre usar variables de entorno para los nombres de plantilla
+    e["plantilla_sino"]    = os.environ.get("PLANTILLA_SINO", "plantilla_dinamica")
+    e["plantilla_abierta"] = os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
     return e
 
 def encuesta_abierta():
