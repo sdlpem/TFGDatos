@@ -249,7 +249,17 @@
     </div>
 
     <label>Fecha y hora de cierre</label>
-    <input type="datetime-local" id="cierre">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px">
+      <div>
+        <div style="font-size:11px;color:#5a7a9a;margin-bottom:6px">DÍA</div>
+        <input type="date" id="cierre-fecha" style="width:100%;background:#0f1923;border:1.5px solid #263346;border-radius:8px;padding:12px 14px;color:#c8daea;font-size:14px;font-family:inherit;color-scheme:dark">
+      </div>
+      <div>
+        <div style="font-size:11px;color:#5a7a9a;margin-bottom:6px">HORA</div>
+        <input type="time" id="cierre-hora" style="width:100%;background:#0f1923;border:1.5px solid #263346;border-radius:8px;padding:12px 14px;color:#c8daea;font-size:14px;font-family:inherit;color-scheme:dark">
+      </div>
+    </div>
+    <div id="cierre-preview" style="font-size:12px;color:#5a7a9a;margin-top:8px"></div>
 
     <label>Vista previa del mensaje WhatsApp</label>
     <div class="wa-preview">
@@ -340,7 +350,7 @@ async function guardarEncuesta() {
     tipo: tipoActual,
     min: document.getElementById("rango-min").value ? parseFloat(document.getElementById("rango-min").value) : null,
     max: document.getElementById("rango-max").value ? parseFloat(document.getElementById("rango-max").value) : null,
-    cierre: document.getElementById("cierre").value || null,
+    cierre: getCierre(),
   };
   const r = await fetch("/api/encuesta", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
   const d = await r.json();
@@ -432,6 +442,37 @@ async function cargarEstado() {
   } catch(e) { console.error(e); }
 }
 
+// ── Helpers fecha/hora ──
+function getCierre() {
+  const fecha = document.getElementById("cierre-fecha").value;
+  const hora  = document.getElementById("cierre-hora").value || "23:59";
+  if (!fecha) return null;
+  return fecha + "T" + hora;
+}
+
+function setCierre(iso) {
+  if (!iso) return;
+  const d = new Date(iso);
+  const fecha = d.toISOString().split("T")[0];
+  const hora  = d.toTimeString().slice(0,5);
+  document.getElementById("cierre-fecha").value = fecha;
+  document.getElementById("cierre-hora").value  = hora;
+  actualizarPreviewCierre();
+}
+
+function actualizarPreviewCierre() {
+  const iso = getCierre();
+  const prev = document.getElementById("cierre-preview");
+  if (!iso) { prev.textContent = ""; return; }
+  const d = new Date(iso);
+  prev.textContent = "⏰ Cierre: " + d.toLocaleString("es-ES", {weekday:"long",day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("cierre-fecha").addEventListener("change", actualizarPreviewCierre);
+  document.getElementById("cierre-hora").addEventListener("change", actualizarPreviewCierre);
+});
+
 // ── Cargar config existente ──
 async function cargarConfig() {
   try {
@@ -441,7 +482,7 @@ async function cargarConfig() {
     if (e.tipo) selTipo(e.tipo);
     if (e.min != null) document.getElementById("rango-min").value = e.min;
     if (e.max != null) document.getElementById("rango-max").value = e.max;
-    if (e.cierre) document.getElementById("cierre").value = e.cierre;
+    if (e.cierre) setCierre(e.cierre);
     actualizarPreview();
   } catch(e) {}
 }
