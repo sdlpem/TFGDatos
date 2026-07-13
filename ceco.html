@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CECO Opinion — Panel</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1923; color: #c8daea; min-height: 100vh; }
+
+    header {
+      background: #1a2533;
+      border-bottom: 1px solid #263346;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .brand { font-size: 18px; font-weight: 800; color: white; letter-spacing: -0.3px; }
+    header .brand span { color: #00c896; }
+    header a { margin-left: auto; color: #5a7a9a; font-size: 13px; text-decoration: none; }
+    header a:hover { color: #ff6b6b; }
+
+    main { max-width: 900px; margin: 32px auto; padding: 0 20px; display: grid; gap: 24px; }
+
+    .card {
+      background: #1a2533;
+      border: 1px solid #263346;
+      border-radius: 14px;
+      padding: 28px;
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #5a7a9a;
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #7a9ab8;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      margin-bottom: 8px;
+      margin-top: 18px;
+    }
+    label:first-of-type { margin-top: 0; }
+
+    textarea, input[type="text"], input[type="datetime-local"], input[type="number"], select {
+      width: 100%;
+      background: #0f1923;
+      border: 1.5px solid #263346;
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #c8daea;
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+    textarea { resize: vertical; min-height: 90px; }
+    textarea:focus, input:focus, select:focus { outline: none; border-color: #00c896; }
+    select option { background: #1a2533; }
+
+    .tipo-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .tipo-btn {
+      border: 1.5px solid #263346;
+      border-radius: 8px;
+      padding: 14px 8px;
+      text-align: center;
+      cursor: pointer;
+      color: #5a7a9a;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.15s;
+      background: #0f1923;
+    }
+    .tipo-btn:hover { border-color: #00c896; color: #c8daea; }
+    .tipo-btn.activo { border-color: #00c896; background: #0f2a1f; color: #00c896; }
+    .tipo-btn .icon { font-size: 22px; display: block; margin-bottom: 6px; }
+
+    .rango { display: none; }
+    .rango.visible { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* Preview WhatsApp */
+    .wa-preview {
+      background: #e5ddd5;
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 4px;
+    }
+    .wa-bubble {
+      background: white;
+      border-radius: 8px 8px 8px 0;
+      padding: 12px 14px 10px;
+      max-width: 300px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .wa-header {
+      font-size: 12px;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 6px;
+    }
+    .wa-body { font-size: 14px; color: #333; line-height: 1.5; }
+    .wa-footer { font-size: 12px; color: #888; margin-top: 6px; }
+    .wa-time { font-size: 11px; color: #aaa; text-align: right; margin-top: 4px; }
+    .wa-btns { margin-top: 6px; }
+    .wa-btn {
+      background: white;
+      border-radius: 6px;
+      padding: 9px;
+      text-align: center;
+      color: #0a9edf;
+      font-size: 14px;
+      font-weight: 500;
+      margin-top: 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+
+    /* Dropzone */
+    .dropzone {
+      border: 2px dashed #263346;
+      border-radius: 10px;
+      padding: 28px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 4px;
+    }
+    .dropzone:hover, .dropzone.drag { border-color: #00c896; background: #0f2a1f; }
+    .dropzone p { font-size: 13px; color: #5a7a9a; }
+    .dropzone strong { color: #00c896; }
+    #file-input { display: none; }
+    .numeros-info { font-size: 13px; color: #5a7a9a; margin-top: 10px; display: none; }
+    .numeros-info.visible { display: block; }
+    .numeros-info strong { color: #00c896; font-size: 16px; }
+
+    /* Botones */
+    .btn {
+      border: none;
+      border-radius: 8px;
+      padding: 13px 24px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      width: 100%;
+      margin-top: 16px;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(135deg, #00c896, #0099ff); color: white; }
+    .btn-danger  { background: #ff4757; color: white; }
+    .btn-ghost   { background: #263346; color: #c8daea; }
+
+    /* Stats mini */
+    .stats-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+    .stat-box {
+      background: #0f1923;
+      border: 1px solid #263346;
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-num { font-size: 28px; font-weight: 800; color: white; }
+    .stat-lbl { font-size: 11px; color: #5a7a9a; text-transform: uppercase; letter-spacing: 0.7px; margin-top: 4px; }
+
+    .estado-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .estado-activa { background: #0f2a1f; color: #00c896; }
+    .estado-cerrada { background: #2a1f0f; color: #ffa502; }
+
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #1a2533; border: 1px solid #263346;
+      color: white; padding: 14px 20px; border-radius: 10px;
+      font-size: 14px; font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      transform: translateY(80px); opacity: 0;
+      transition: all 0.3s; z-index: 100;
+    }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.error { border-color: #ff4757; color: #ff6b6b; }
+    .toast.ok { border-color: #00c896; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">CECO <span>Opinion</span></div>
+  <span style="color:#5a7a9a;font-size:13px">Panel de gestión</span>
+  <a href="/ceco/logout">Cerrar sesión</a>
+</header>
+
+<main>
+
+  <!-- ESTADO ACTUAL -->
+  <div class="card">
+    <div class="card-title">Estado de la encuesta activa</div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+      <div class="estado-badge" id="badge-estado">Cargando...</div>
+      <span id="texto-cierre" style="font-size:13px;color:#5a7a9a"></span>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box"><div class="stat-num" id="stat-total">—</div><div class="stat-lbl">Respuestas</div></div>
+      <div class="stat-box"><div class="stat-num" id="stat-si" style="color:#00c896">—</div><div class="stat-lbl">Respuesta principal</div></div>
+      <div class="stat-box"><div class="stat-num" id="stat-pct">—</div><div class="stat-lbl">Participación</div></div>
+    </div>
+  </div>
+
+  <!-- CONFIGURAR ENCUESTA -->
+  <div class="card">
+    <div class="card-title">Configurar nueva encuesta</div>
+
+    <label>Pregunta</label>
+    <textarea id="pregunta-texto" placeholder="¿Crees que subirá el PIB en 2027?"></textarea>
+
+    <label>Tipo de respuesta</label>
+    <div class="tipo-grid">
+      <div class="tipo-btn activo" data-tipo="sino" onclick="selTipo('sino')">
+        <span class="icon">✅</span>SÍ / NO
+      </div>
+      <div class="tipo-btn" data-tipo="porcentaje" onclick="selTipo('porcentaje')">
+        <span class="icon">📈</span>Porcentaje
+      </div>
+      <div class="tipo-btn" data-tipo="numero" onclick="selTipo('numero')">
+        <span class="icon">🔢</span>Número
+      </div>
+    </div>
+
+    <div class="rango" id="rango">
+      <div><label>Valor mínimo</label><input type="number" id="rango-min" placeholder="0"></div>
+      <div><label>Valor máximo</label><input type="number" id="rango-max" placeholder="100"></div>
+    </div>
+
+    <label>Fecha y hora de cierre</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px">
+      <div>
+        <div style="font-size:11px;color:#5a7a9a;margin-bottom:6px">DÍA</div>
+        <input type="date" id="cierre-fecha" style="width:100%;background:#0f1923;border:1.5px solid #263346;border-radius:8px;padding:12px 14px;color:#c8daea;font-size:14px;font-family:inherit;color-scheme:dark">
+      </div>
+      <div>
+        <div style="font-size:11px;color:#5a7a9a;margin-bottom:6px">HORA</div>
+        <input type="time" id="cierre-hora" style="width:100%;background:#0f1923;border:1.5px solid #263346;border-radius:8px;padding:12px 14px;color:#c8daea;font-size:14px;font-family:inherit;color-scheme:dark">
+      </div>
+    </div>
+    <div id="cierre-preview" style="font-size:12px;color:#5a7a9a;margin-top:8px"></div>
+
+    <label>Vista previa del mensaje WhatsApp</label>
+    <div class="wa-preview">
+      <div class="wa-bubble">
+        <div class="wa-header">CECO Opinion</div>
+        <div class="wa-body">
+          Queremos saber su opinión:<br><br>
+          <span id="prev-texto" style="font-weight:600">Tu pregunta aparecerá aquí</span>
+          <span id="prev-instrucciones"></span>
+        </div>
+        <div class="wa-time">11:00 ✓✓</div>
+      </div>
+      <div class="wa-btns" id="prev-btns">
+        <div class="wa-btn">↩ Sí</div>
+        <div class="wa-btn">↩ No</div>
+      </div>
+    </div>
+
+    <button class="btn btn-ghost" onclick="guardarEncuesta()" style="margin-top:20px">Guardar configuración</button>
+  </div>
+
+  <!-- LANZAR -->
+  <div class="card">
+    <div class="card-title">Lanzar encuesta</div>
+
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+      <div style="font-size:32px;margin-bottom:8px">📂</div>
+      <p>Arrastra el CSV o Excel con los números<br><strong>o haz clic para seleccionar</strong></p>
+      <p style="font-size:12px;margin-top:8px;color:#3a5a7a">Una columna con números de teléfono (con prefijo país, sin +)</p>
+    </div>
+    <input type="file" id="file-input" accept=".csv,.xlsx,.xls" onchange="procesarArchivo(this.files[0])">
+    <div class="numeros-info" id="numeros-info">
+      <strong id="numeros-count">0</strong> números cargados
+      <span id="numeros-muestra" style="color:#3a5a7a;margin-left:8px;font-size:12px"></span>
+    </div>
+
+    <button class="btn btn-primary" id="btn-lanzar" onclick="lanzar()" disabled>🚀 Lanzar encuesta</button>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+let tipoActual = "sino";
+let numerosLista = [];
+let totalEnviados = 0;
+
+// ── Tipo ──
+function selTipo(tipo) {
+  tipoActual = tipo;
+  document.querySelectorAll(".tipo-btn").forEach(b => b.classList.remove("activo"));
+  document.querySelector(`[data-tipo="${tipo}"]`).classList.add("activo");
+  document.getElementById("rango").classList.toggle("visible", tipo !== "sino");
+  actualizarPreview();
+}
+
+// ── Preview ──
+document.getElementById("pregunta-texto").addEventListener("input", actualizarPreview);
+
+function actualizarPreview() {
+  const texto = document.getElementById("pregunta-texto").value || "Tu pregunta aparecerá aquí";
+  document.getElementById("prev-texto").textContent = texto;
+  const btns = document.getElementById("prev-btns");
+  const instr = document.getElementById("prev-instrucciones");
+  if (tipoActual === "sino") {
+    btns.style.display = "block";
+    instr.textContent = "";
+  } else {
+    btns.style.display = "none";
+    const mn = document.getElementById("rango-min").value;
+    const mx = document.getElementById("rango-max").value;
+    const fmt = tipoActual === "porcentaje"
+      ? `\n\nResponde con un porcentaje${mn && mx ? ` entre ${mn}% y ${mx}%` : ""} (ej: 3.5)`
+      : `\n\nResponde con un número${mn && mx ? ` entre ${mn} y ${mx}` : ""}`;
+    instr.textContent = fmt;
+    instr.style.color = "#888";
+  }
+}
+
+// ── Guardar encuesta ──
+async function guardarEncuesta() {
+  const texto = document.getElementById("pregunta-texto").value.trim();
+  if (!texto) { toast("Escribe la pregunta", "error"); return; }
+  const body = {
+    texto,
+    tipo: tipoActual,
+    min: document.getElementById("rango-min").value ? parseFloat(document.getElementById("rango-min").value) : null,
+    max: document.getElementById("rango-max").value ? parseFloat(document.getElementById("rango-max").value) : null,
+    cierre: getCierre(),
+  };
+  const r = await fetch("/api/encuesta", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const d = await r.json();
+  d.ok ? toast("Configuración guardada ✓") : toast("Error al guardar", "error");
+}
+
+// ── CSV/Excel ──
+function procesarArchivo(file) {
+  if (!file) return;
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (ext === "csv") {
+    const reader = new FileReader();
+    reader.onload = e => extraerNumeros(e.target.result.split(/\r?\n/).map(l=>l.trim()).filter(Boolean));
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, {type:"array"});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      extraerNumeros(XLSX.utils.sheet_to_json(ws,{header:1}).flat().map(v=>String(v).trim()).filter(Boolean));
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function extraerNumeros(vals) {
+  numerosLista = vals.map(v=>v.replace(/[\s\-\+\.]/g,"")).filter(v=>/^\d{8,15}$/.test(v));
+  const info = document.getElementById("numeros-info");
+  info.classList.add("visible");
+  document.getElementById("numeros-count").textContent = numerosLista.length;
+  const muestra = numerosLista.slice(0,3).map(n=>"···"+n.slice(-4)).join(", ");
+  document.getElementById("numeros-muestra").textContent = numerosLista.length ? `(ej: ${muestra}${numerosLista.length>3?"...":""})` : "No se encontraron números válidos";
+  document.getElementById("btn-lanzar").disabled = numerosLista.length === 0;
+  totalEnviados = numerosLista.length;
+}
+
+const dz = document.getElementById("dropzone");
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("drag"); procesarArchivo(e.dataTransfer.files[0]); });
+
+// ── Lanzar ──
+async function lanzar() {
+  if (!numerosLista.length) { toast("Carga un archivo primero", "error"); return; }
+  const texto = document.getElementById("pregunta-texto").value.trim();
+  if (!texto) { toast("Guarda la configuración primero", "error"); return; }
+
+  if (!confirm(`¿Lanzar la encuesta a ${numerosLista.length} empresarios?`)) return;
+
+  await guardarEncuesta();
+
+  const btn = document.getElementById("btn-lanzar");
+  btn.disabled = true; btn.textContent = "Enviando...";
+
+  const r = await fetch("/api/lanzar", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({numeros: numerosLista}) });
+  const d = await r.json();
+  toast(`✓ Enviado a ${d.enviados} empresario${d.enviados!==1?"s":""}`);
+  btn.textContent = "🚀 Lanzar encuesta";
+  btn.disabled = false;
+  cargarEstado();
+}
+
+// ── Estado ──
+async function cargarEstado() {
+  try {
+    const r = await fetch("/api/resultados");
+    const d = await r.json();
+    const badge = document.getElementById("badge-estado");
+    badge.textContent = d.activa ? "🟢 Activa" : "🔴 Cerrada";
+    badge.className = "estado-badge " + (d.activa ? "estado-activa" : "estado-cerrada");
+
+    if (d.cierre) {
+      const fecha = new Date(d.cierre).toLocaleString("es-ES");
+      document.getElementById("texto-cierre").textContent = `Cierre: ${fecha}`;
+    }
+
+    document.getElementById("stat-total").textContent = d.total || "0";
+
+    // Respuesta más votada
+    if (d.conteo && Object.keys(d.conteo).length) {
+      const top = Object.entries(d.conteo).sort((a,b)=>b[1]-a[1])[0];
+      document.getElementById("stat-si").textContent = `${top[0]} (${top[1]})`;
+    } else {
+      document.getElementById("stat-si").textContent = "—";
+    }
+
+    const pct = totalEnviados > 0 ? Math.round(d.total / totalEnviados * 100) + "%" : "—";
+    document.getElementById("stat-pct").textContent = pct;
+  } catch(e) { console.error(e); }
+}
+
+// ── Helpers fecha/hora ──
+function getCierre() {
+  const fecha = document.getElementById("cierre-fecha").value;
+  const hora  = document.getElementById("cierre-hora").value || "23:59";
+  if (!fecha) return null;
+  return fecha + "T" + hora;
+}
+
+function setCierre(iso) {
+  if (!iso) return;
+  const d = new Date(iso);
+  const fecha = d.toISOString().split("T")[0];
+  const hora  = d.toTimeString().slice(0,5);
+  document.getElementById("cierre-fecha").value = fecha;
+  document.getElementById("cierre-hora").value  = hora;
+  actualizarPreviewCierre();
+}
+
+function actualizarPreviewCierre() {
+  const iso = getCierre();
+  const prev = document.getElementById("cierre-preview");
+  if (!iso) { prev.textContent = ""; return; }
+  const d = new Date(iso);
+  prev.textContent = "⏰ Cierre: " + d.toLocaleString("es-ES", {weekday:"long",day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("cierre-fecha").addEventListener("change", actualizarPreviewCierre);
+  document.getElementById("cierre-hora").addEventListener("change", actualizarPreviewCierre);
+});
+
+// ── Cargar config existente ──
+async function cargarConfig() {
+  try {
+    const r = await fetch("/api/encuesta");
+    const e = await r.json();
+    if (e.texto) document.getElementById("pregunta-texto").value = e.texto;
+    if (e.tipo) selTipo(e.tipo);
+    if (e.min != null) document.getElementById("rango-min").value = e.min;
+    if (e.max != null) document.getElementById("rango-max").value = e.max;
+    if (e.cierre) setCierre(e.cierre);
+    actualizarPreview();
+  } catch(e) {}
+}
+
+// ── Toast ──
+function toast(msg, tipo="ok") {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = `toast ${tipo} visible`;
+  setTimeout(() => t.classList.remove("visible"), 3000);
+}
+
+cargarConfig();
+cargarEstado();
+setInterval(cargarEstado, 10000);
+</script>
+</body>
+</html>
