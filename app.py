@@ -94,15 +94,15 @@ def enviar_plantilla(numero, encuesta):
         componentes = [{
             "type": "body",
             "parameters": [
-                {"type": "text", "text": encuesta["texto"]}
+                {"type": "text", "parameter_name": "pregunta", "text": encuesta["texto"]}
             ]
         }]
     else:
         componentes = [{
             "type": "body",
             "parameters": [
-                {"type": "text", "text": encuesta["texto"]},
-                {"type": "text", "text": formato}
+                {"type": "text", "parameter_name": "pregunta",          "text": encuesta["texto"]},
+                {"type": "text", "parameter_name": "formato_respuesta", "text": formato}
             ]
         }]
 
