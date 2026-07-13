@@ -90,13 +90,21 @@ def enviar_plantilla(numero, encuesta):
     nombre = encuesta.get("plantilla_sino", "plantilla_dinamica") if tipo == "sino" else encuesta.get("plantilla_abierta", "plantilla_dinamica")
     formato = "Responda con SÍ o NO" if tipo == "sino" else formato_instrucciones(encuesta)
 
-    componentes = [{
-        "type": "body",
-        "parameters": [
-            {"type": "text", "text": encuesta["texto"]},
-            {"type": "text", "text": formato}
-        ]
-    }]
+    if tipo == "sino":
+        componentes = [{
+            "type": "body",
+            "parameters": [
+                {"type": "text", "text": encuesta["texto"]}
+            ]
+        }]
+    else:
+        componentes = [{
+            "type": "body",
+            "parameters": [
+                {"type": "text", "text": encuesta["texto"]},
+                {"type": "text", "text": formato}
+            ]
+        }]
 
     r = requests.post(
         f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
