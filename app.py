@@ -46,11 +46,15 @@ def encuesta_abierta():
     if e.get("cierre"):
         try:
             cierre_str = e["cierre"]
-            # Añadir segundos si faltan
             if len(cierre_str) == 16:
                 cierre_str += ":00"
             cierre = datetime.fromisoformat(cierre_str)
-            if datetime.now() > cierre:
+            # Render corre en UTC, España es UTC+2 en verano
+            from datetime import timezone, timedelta
+            offset = int(os.environ.get("TZ_OFFSET", "2"))
+            ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
+            print(f"⏰ Ahora (local): {ahora} | Cierre: {cierre}")
+            if ahora > cierre:
                 return False
         except Exception as ex:
             print(f"⚠️ Error parseando cierre: {ex}")
