@@ -469,7 +469,27 @@ function actualizarPreviewCierre() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("cierre-fecha").addEventListener("change", actualizarPreviewCierre);
+  // Bloquear fechas pasadas
+  const hoy = new Date();
+  const yyyy = hoy.getFullYear();
+  const mm   = String(hoy.getMonth()+1).padStart(2,"0");
+  const dd   = String(hoy.getDate()).padStart(2,"0");
+  document.getElementById("cierre-fecha").min = yyyy+"-"+mm+"-"+dd;
+
+  document.getElementById("cierre-fecha").addEventListener("change", () => {
+    actualizarPreviewCierre();
+    // Si eligio hoy, bloquear horas pasadas
+    const fechaElegida = document.getElementById("cierre-fecha").value;
+    const hoyStr = yyyy+"-"+mm+"-"+dd;
+    const inputHora = document.getElementById("cierre-hora");
+    if (fechaElegida === hoyStr) {
+      const hh = String(hoy.getHours()).padStart(2,"0");
+      const min = String(hoy.getMinutes()).padStart(2,"0");
+      inputHora.min = hh+":"+min;
+    } else {
+      inputHora.min = "";
+    }
+  });
   document.getElementById("cierre-hora").addEventListener("change", actualizarPreviewCierre);
 });
 
