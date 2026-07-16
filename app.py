@@ -45,11 +45,15 @@ def encuesta_abierta():
         return False
     if e.get("cierre"):
         try:
-            cierre = datetime.fromisoformat(e["cierre"])
+            cierre_str = e["cierre"]
+            # Añadir segundos si faltan
+            if len(cierre_str) == 16:
+                cierre_str += ":00"
+            cierre = datetime.fromisoformat(cierre_str)
             if datetime.now() > cierre:
                 return False
-        except:
-            pass
+        except Exception as ex:
+            print(f"⚠️ Error parseando cierre: {ex}")
     return True
 
 def guardar_voto(numero, respuesta):
