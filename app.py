@@ -1,8 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory, session, redirect
 import os, json, requests, hashlib
 from datetime import datetime
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "clave_secreta_cambiar")
@@ -25,7 +25,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 def db_conn():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL no está configurada en Render")
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def init_db():
