@@ -39,6 +39,58 @@ def cargar_encuesta():
     e["plantilla_abierta"] = os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
     return e
 
+def estado_encuesta():
+    """
+    Devuelve el estado real de la encuesta para el panel:
+    - SIN_CONFIGURAR
+    - PENDIENTE
+    - ACTIVA
+    - CERRADA
+    """
+    e = cargar_encuesta()
+
+    if not e.get("texto"):
+        return "SIN_CONFIGURAR"
+
+    # Si está marcada como activa, comprobamos también la fecha de cierre.
+    if e.get("activa"):
+        if e.get("cierre"):
+            try:
+                cierre_str = e["cierre"]
+                if len(cierre_str) == 16:
+                    cierre_str += ":00"
+                cierre = datetime.fromisoformat(cierre_str)
+
+                from datetime import timezone, timedelta
+                offset = int(os.environ.get("TZ_OFFSET", "2"))
+                ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
+
+                if ahora > cierre:
+                    return "CERRADA"
+            except Exception:
+                pass
+        return "ACTIVA"
+
+    # No está activa: si la fecha futura aún no ha llegado, está pendiente.
+    if e.get("cierre"):
+        try:
+            cierre_str = e["cierre"]
+            if len(cierre_str) == 16:
+                cierre_str += ":00"
+            cierre = datetime.fromisoformat(cierre_str)
+
+            from datetime import timezone, timedelta
+            offset = int(os.environ.get("TZ_OFFSET", "2"))
+            ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
+
+            if ahora <= cierre:
+                return "PENDIENTE"
+        except Exception:
+            pass
+
+    return "CERRADA"
+
+
 def encuesta_abierta():
     e = cargar_encuesta()
     if not e.get("activa"):
@@ -375,7 +427,7 @@ def api_set_encuesta():
         "min":      d.get("min"),
         "max":      d.get("max"),
         "cierre":   d.get("cierre"),
-        "activa":   False
+        "activa":   cargar_encuesta().get("activa", False)
     }
     guardar_json("encuesta.json", encuesta)
     return jsonify({"ok": True})
@@ -423,11 +475,13 @@ def api_cerrar():
 def api_resultados():
     encuesta = cargar_encuesta()
     res      = resumen_votos()
+    estado = estado_encuesta()
     return jsonify({
         "pregunta": encuesta.get("texto",""),
         "tipo":     encuesta.get("tipo","sino"),
         "cierre":   encuesta.get("cierre"),
-        "activa":   encuesta_abierta(),
+        "activa":   estado == "ACTIVA",
+        "estado":   estado,
         "total":    res["total"],
         "conteo":   res["conteo"]
     })
