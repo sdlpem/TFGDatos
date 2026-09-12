@@ -1,228 +1,418 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CECO Opinion — Resultados</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f1923;
-      color: #c8daea;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mercado de Predicciones — Resultados</title>
+<style>
+*{box-sizing:border-box}
+body{
+    margin:0;
+    background:#f5f7fa;
+    color:#18212b;
+    font-family:Arial,Helvetica,sans-serif;
+}
+header{
+    background:#14202b;
+    color:#fff;
+    padding:18px 28px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+}
+header .logo{font-size:22px}
+header h1{
+    font-size:19px;
+    margin:0;
+    flex:1;
+}
+header .status{
+    font-size:13px;
+    color:#b9c6d2;
+}
+main{
+    max-width:1050px;
+    margin:25px auto;
+    padding:0 18px;
+}
+.card{
+    background:#fff;
+    border:1px solid #e2e7ec;
+    border-radius:12px;
+    padding:21px;
+    margin-bottom:18px;
+}
+.topbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:15px;
+}
+.question{
+    font-size:24px;
+    line-height:1.3;
+    margin:4px 0 9px;
+    color:#18212b;
+}
+.meta{
+    font-size:13px;
+    color:#74818d;
+}
+.badge{
+    padding:6px 11px;
+    border-radius:20px;
+    font-size:11px;
+    font-weight:bold;
+    white-space:nowrap;
+}
+.active{
+    background:#e5f8ef;
+    color:#12804e;
+}
+.closed{
+    background:#eef1f3;
+    color:#66737f;
+}
+.scheduled{
+    background:#e8f0ff;
+    color:#2864a5;
+}
+.draft{
+    background:#fff3d8;
+    color:#936000;
+}
+.stats{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:12px;
+    margin-top:20px;
+}
+.stat{
+    text-align:center;
+    background:#f7f9fb;
+    border-radius:9px;
+    padding:17px 12px;
+}
+.num{
+    font-size:29px;
+    font-weight:800;
+    color:#18212b;
+}
+.lbl{
+    font-size:11px;
+    color:#7b8790;
+    text-transform:uppercase;
+    margin-top:4px;
+}
+.section-title{
+    font-size:17px;
+    font-weight:bold;
+    margin:0 0 17px;
+}
+.result{
+    margin:20px 0;
+}
+.result:last-child{
+    margin-bottom:0;
+}
+.result-head{
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    margin-bottom:7px;
+    font-size:14px;
+}
+.result-name{
+    font-weight:600;
+}
+.result-value{
+    font-weight:bold;
+    color:#138a63;
+}
+.track{
+    width:100%;
+    height:14px;
+    background:#e9eef1;
+    border-radius:20px;
+    overflow:hidden;
+}
+.fill{
+    height:100%;
+    background:#138a63;
+    border-radius:20px;
+    transition:width .4s ease;
+}
+.result-foot{
+    display:flex;
+    justify-content:space-between;
+    margin-top:6px;
+    font-size:12px;
+    color:#7b8790;
+}
+.highlight{
+    border:1px solid #dbe5df;
+    background:#f8fbf9;
+}
+.notice{
+    background:#fff6dc;
+    border:1px solid #eedb9c;
+    border-radius:8px;
+    padding:11px 13px;
+    margin-bottom:18px;
+    font-size:13px;
+    color:#70560e;
+}
+.empty{
+    text-align:center;
+    color:#8a969f;
+    padding:25px 10px;
+}
+.footer{
+    text-align:center;
+    color:#89949d;
+    font-size:12px;
+    padding:5px 0 25px;
+}
+.error{
+    background:#fff0f1;
+    border:1px solid #f0c4c8;
+    color:#b13a45;
+    border-radius:8px;
+    padding:13px;
+}
+@media(max-width:650px){
+    header{
+        padding:15px 18px;
     }
-
-    header {
-      background: #1a2533;
-      border-bottom: 1px solid #263346;
-      padding: 16px 32px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
+    header h1{
+        font-size:16px;
     }
-    .brand { font-size: 18px; font-weight: 800; color: white; }
-    .brand span { color: #00c896; }
-    .live-dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: #00c896;
-      animation: pulse 1.5s infinite;
-      margin-left: auto;
+    header .status{
+        display:none;
     }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-    .live-label { font-size: 12px; color: #00c896; font-weight: 600; margin-left: 6px; }
-
-    main { max-width: 700px; margin: 40px auto; padding: 0 20px; flex: 1; width: 100%; }
-
-    .pregunta-card {
-      background: #1a2533;
-      border: 1px solid #263346;
-      border-radius: 16px;
-      padding: 32px;
-      margin-bottom: 24px;
-      text-align: center;
+    main{
+        margin:18px auto;
     }
-    .pregunta-label {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: #5a7a9a;
-      margin-bottom: 16px;
+    .topbar{
+        display:block;
     }
-    .pregunta-texto {
-      font-size: 22px;
-      font-weight: 700;
-      color: white;
-      line-height: 1.4;
-      letter-spacing: -0.3px;
+    .badge{
+        display:inline-block;
+        margin-top:12px;
     }
-    .estado-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      margin-top: 16px;
+    .question{
+        font-size:21px;
     }
-    .badge {
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 700;
+    .stats{
+        grid-template-columns:1fr;
     }
-    .badge-activa { background: #0f2a1f; color: #00c896; }
-    .badge-cerrada { background: #2a1f0f; color: #ffa502; }
-    .cierre-txt { font-size: 13px; color: #5a7a9a; }
-
-    .resultados-card {
-      background: #1a2533;
-      border: 1px solid #263346;
-      border-radius: 16px;
-      padding: 32px;
-      margin-bottom: 24px;
-    }
-    .total-txt {
-      font-size: 13px;
-      color: #5a7a9a;
-      margin-bottom: 24px;
-      text-align: center;
-    }
-    .total-txt strong { color: #00c896; font-size: 18px; }
-
-    .barra-item { margin-bottom: 20px; }
-    .barra-header {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .barra-label { font-size: 15px; font-weight: 700; color: white; }
-    .barra-pct { font-size: 15px; font-weight: 800; color: #00c896; }
-    .barra-track {
-      height: 12px;
-      background: #0f1923;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    .barra-fill {
-      height: 100%;
-      border-radius: 8px;
-      transition: width 0.8s cubic-bezier(.4,0,.2,1);
-    }
-    .color-0 { background: linear-gradient(90deg, #00c896, #0099ff); }
-    .color-1 { background: linear-gradient(90deg, #ff6b6b, #ff4757); }
-    .color-2 { background: linear-gradient(90deg, #ffa502, #ff6348); }
-    .color-3 { background: linear-gradient(90deg, #7bed9f, #2ed573); }
-    .barra-votos { font-size: 12px; color: #5a7a9a; margin-top: 4px; }
-
-    .empty {
-      text-align: center;
-      padding: 40px;
-      color: #5a7a9a;
-    }
-    .empty .icon { font-size: 40px; margin-bottom: 12px; }
-    .empty p { font-size: 14px; }
-
-    footer {
-      text-align: center;
-      padding: 24px;
-      color: #3a5a7a;
-      font-size: 12px;
-      border-top: 1px solid #1a2533;
-    }
-  </style>
+}
+</style>
 </head>
+
 <body>
 
 <header>
-  <div class="brand">CECO <span>Opinion</span></div>
-  <div class="live-dot" id="live-dot"></div>
-  <span class="live-label" id="live-label">En directo</span>
+    <span class="logo">📊</span>
+    <h1>Mercado de Predicciones — Resultados</h1>
+    <span class="status" id="clock"></span>
 </header>
 
 <main>
-  <div class="pregunta-card">
-    <div class="pregunta-label">Pregunta activa</div>
-    <div class="pregunta-texto" id="pregunta-texto">Cargando...</div>
-    <div class="estado-row">
-      <div class="badge" id="badge-estado">...</div>
-      <span class="cierre-txt" id="cierre-txt"></span>
-    </div>
-  </div>
 
-  <div class="resultados-card">
-    <div class="total-txt">
-      Han respondido <strong id="total-num">0</strong> empresarios
+    <section class="card">
+        <div class="topbar">
+            <div>
+                <div class="meta" id="id"></div>
+                <h2 class="question" id="question">Cargando…</h2>
+                <div class="meta" id="dates"></div>
+            </div>
+            <span id="badge" class="badge closed">Cargando…</span>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="num" id="total">—</div>
+                <div class="lbl">Respuestas</div>
+            </div>
+            <div class="stat">
+                <div class="num" id="participants">—</div>
+                <div class="lbl">Destinatarios</div>
+            </div>
+            <div class="stat">
+                <div class="num" id="participation">—</div>
+                <div class="lbl">Participación</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2 class="section-title">Distribución de respuestas</h2>
+        <div id="results">
+            <div class="empty">Cargando resultados…</div>
+        </div>
+    </section>
+
+    <section class="card highlight" id="public-note">
+        <div class="section-title">Sobre esta encuesta</div>
+        <div class="meta" id="note">
+            Los resultados se actualizan automáticamente.
+        </div>
+    </section>
+
+    <div class="footer">
+        Mercado de Predicciones · Resultados de la encuesta
     </div>
-    <div id="barras-container">
-      <div class="empty">
-        <div class="icon">📊</div>
-        <p>Aún no hay respuestas</p>
-      </div>
-    </div>
-  </div>
+
 </main>
 
-<footer>Los resultados son anónimos · Se actualizan automáticamente</footer>
-
 <script>
-async function cargar() {
-  try {
-    const r = await fetch("/api/resultados");
-    const d = await r.json();
+const $ = id => document.getElementById(id);
 
-    document.getElementById("pregunta-texto").textContent = d.pregunta || "Sin pregunta activa";
+function escapeHtml(value){
+    return String(value ?? "").replace(/[&<>"']/g, c => ({
+        "&":"&amp;",
+        "<":"&lt;",
+        ">":"&gt;",
+        '"':"&quot;",
+        "'":"&#039;"
+    }[c]));
+}
 
-    const badge = document.getElementById("badge-estado");
-    badge.textContent = d.activa ? "🟢 Encuesta abierta" : "🔴 Encuesta cerrada";
-    badge.className = "badge " + (d.activa ? "badge-activa" : "badge-cerrada");
+function updateClock(){
+    $("clock").textContent = new Date().toLocaleTimeString("es-ES", {
+        hour:"2-digit",
+        minute:"2-digit"
+    });
+}
+updateClock();
+setInterval(updateClock, 60000);
 
-    const liveDot = document.getElementById("live-dot");
-    const liveLabel = document.getElementById("live-label");
-    liveDot.style.background = d.activa ? "#00c896" : "#ffa502";
-    liveLabel.textContent = d.activa ? "En directo" : "Cerrada";
-    liveLabel.style.color = d.activa ? "#00c896" : "#ffa502";
+function estadoClase(estado, activa){
+    if(activa || estado === "ACTIVA") return "active";
+    if(estado === "PROGRAMADA") return "scheduled";
+    if(estado === "BORRADOR") return "draft";
+    return "closed";
+}
 
-    if (d.cierre) {
-      const fecha = new Date(d.cierre).toLocaleString("es-ES", {day:"2-digit",month:"long",hour:"2-digit",minute:"2-digit"});
-      document.getElementById("cierre-txt").textContent = d.activa ? `Cierra el ${fecha}` : `Cerró el ${fecha}`;
+function estadoTexto(estado, activa){
+    if(activa || estado === "ACTIVA") return "🟢 ACTIVA";
+    if(estado === "PROGRAMADA") return "🔵 PROGRAMADA";
+    if(estado === "BORRADOR") return "🟡 BORRADOR";
+    return "⚫ CERRADA";
+}
+
+async function cargar(){
+    try{
+        const response = await fetch("/api/resultados" + window.location.search);
+        const data = await response.json();
+
+        if(!response.ok){
+            throw new Error(data.error || "No se pudieron cargar los resultados");
+        }
+
+        if(!data.encuesta_id){
+            $("question").textContent = "No hay una encuesta disponible";
+            $("results").innerHTML =
+                '<div class="empty">Todavía no hay resultados que mostrar.</div>';
+            return;
+        }
+
+        $("id").textContent = "ENCUESTA #" + data.encuesta_id;
+        $("question").textContent = data.pregunta || "Sin pregunta";
+
+        const estado = data.estado || (data.activa ? "ACTIVA" : "CERRADA");
+        const badge = $("badge");
+        badge.textContent = estadoTexto(estado, data.activa);
+        badge.className = "badge " + estadoClase(estado, data.activa);
+
+        const total = Number(data.total || 0);
+        const destinatarios = Number(data.destinatarios || 0);
+
+        $("total").textContent = total;
+        $("participants").textContent = destinatarios;
+
+        const participation = destinatarios > 0
+            ? Math.round(total / destinatarios * 100) + "%"
+            : "—";
+
+        $("participation").textContent = participation;
+
+        let fecha = "";
+
+        if(data.cierre){
+            const cierre = new Date(data.cierre);
+            if(!isNaN(cierre)){
+                fecha = data.activa
+                    ? "Cierre previsto: " + cierre.toLocaleString("es-ES", {
+                        day:"2-digit",
+                        month:"2-digit",
+                        year:"numeric",
+                        hour:"2-digit",
+                        minute:"2-digit"
+                    })
+                    : "Fecha de cierre: " + cierre.toLocaleString("es-ES", {
+                        day:"2-digit",
+                        month:"2-digit",
+                        year:"numeric",
+                        hour:"2-digit",
+                        minute:"2-digit"
+                    });
+            }
+        }
+
+        $("dates").textContent = fecha;
+
+        const counts = Object.entries(data.conteo || {})
+            .map(([name, count]) => [name, Number(count || 0)])
+            .sort((a,b) => b[1] - a[1]);
+
+        if(!counts.length){
+            $("results").innerHTML =
+                '<div class="empty">Aún no hay respuestas.</div>';
+        }else{
+            $("results").innerHTML = counts.map(([name, count]) => {
+                const percentage = total > 0
+                    ? Math.round(count / total * 100)
+                    : 0;
+
+                return `
+                    <div class="result">
+                        <div class="result-head">
+                            <span class="result-name">${escapeHtml(name)}</span>
+                            <span class="result-value">${percentage}%</span>
+                        </div>
+                        <div class="track">
+                            <div class="fill" style="width:${percentage}%"></div>
+                        </div>
+                        <div class="result-foot">
+                            <span>${count} voto${count !== 1 ? "s" : ""}</span>
+                            <span>${percentage}% del total</span>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        if(data.activa){
+            $("note").textContent =
+                "La encuesta está activa. Los resultados se actualizan automáticamente.";
+        }else{
+            $("note").textContent =
+                "Esta encuesta está cerrada. Sus resultados se conservan en el histórico.";
+        }
+
+    }catch(error){
+        console.error(error);
+        $("question").textContent = "No se pudieron cargar los resultados";
+        $("results").innerHTML =
+            '<div class="error">' + escapeHtml(error.message) + '</div>';
     }
-
-    document.getElementById("total-num").textContent = d.total;
-
-    const contenedor = document.getElementById("barras-container");
-    const conteo = d.conteo || {};
-    const entradas = Object.entries(conteo).sort((a,b) => b[1]-a[1]);
-
-    if (entradas.length === 0) {
-      contenedor.innerHTML = `<div class="empty"><div class="icon">📊</div><p>Aún no hay respuestas</p></div>`;
-      return;
-    }
-
-    const maxVal = Math.max(...entradas.map(([,v])=>v));
-    contenedor.innerHTML = entradas.map(([resp, votos], i) => {
-      const pct = d.total > 0 ? Math.round(votos / d.total * 100) : 0;
-      return `
-        <div class="barra-item">
-          <div class="barra-header">
-            <span class="barra-label">${resp}</span>
-            <span class="barra-pct">${pct}%</span>
-          </div>
-          <div class="barra-track">
-            <div class="barra-fill color-${i%4}" style="width:${pct}%"></div>
-          </div>
-          <div class="barra-votos">${votos} voto${votos!==1?"s":""}</div>
-        </div>
-      `;
-    }).join("");
-  } catch(e) {
-    console.error(e);
-  }
 }
 
 cargar();
 setInterval(cargar, 5000);
 </script>
+
 </body>
 </html>
