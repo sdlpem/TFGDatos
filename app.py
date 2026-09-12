@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory, session, redirect
 import os, json, requests, hashlib
 from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "clave_secreta_cambiar")
@@ -13,119 +15,369 @@ CECO_PASS     = os.environ.get("CECO_PASS", "ceco1234")
 RESULTADOS_URL = os.environ.get("RESULTADOS_URL", "https://tfgdatos.onrender.com/resultados")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
 # ═══════════════════════════════════════════════════
-# UTILIDADES
+# BASE DE DATOS
 # ═══════════════════════════════════════════════════
 
-def cargar_json(f):
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL no está configurada en Render")
+    return psycopg2.connect(DATABASE_URL)
+
+
+def init_db():
+    """Crea las tablas necesarias si todavía no existen."""
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS encuestas (
+                    id SERIAL PRIMARY KEY,
+                    texto TEXT NOT NULL DEFAULT '',
+                    tipo VARCHAR(30) NOT NULL DEFAULT 'sino',
+                    minimo DOUBLE PRECISION,
+                    maximo DOUBLE PRECISION,
+                    cierre TIMESTAMP NULL,
+                    activa BOOLEAN NOT NULL DEFAULT FALSE,
+                    estado VARCHAR(30) NOT NULL DEFAULT 'BORRADOR',
+                    fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    fecha_lanzamiento TIMESTAMP NULL,
+                    fecha_cierre_real TIMESTAMP NULL,
+                    destinatarios INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS votos (
+                    id SERIAL PRIMARY KEY,
+                    encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+                    telefono VARCHAR(30) NOT NULL,
+                    respuesta TEXT NOT NULL,
+                    fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(encuesta_id, telefono)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS estados_participantes (
+                    id SERIAL PRIMARY KEY,
+                    encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+                    telefono VARCHAR(30) NOT NULL,
+                    estado VARCHAR(40) NOT NULL,
+                    fecha_actualizacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(encuesta_id, telefono)
+                )
+            """)
+        conn.commit()
+
+
+def _fecha_db(valor):
+    if not valor:
+        return None
     try:
-        with open(os.path.join(DATA_DIR, f)) as fp:
-            return json.load(fp)
-    except:
-        return {}
+        s = str(valor)
+        if len(s) == 16:
+            s += ":00"
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
 
-def guardar_json(f, d):
-    with open(os.path.join(DATA_DIR, f), "w") as fp:
-        json.dump(d, fp, indent=2, ensure_ascii=False)
+
+def _encuesta_dict(row):
+    if not row:
+        return {
+            "id": None,
+            "texto": "",
+            "tipo": "sino",
+            "min": None,
+            "max": None,
+            "cierre": None,
+            "activa": False,
+            "estado": "SIN_CONFIGURAR",
+            "fecha_creacion": None,
+            "fecha_lanzamiento": None,
+            "fecha_cierre_real": None,
+            "destinatarios": 0,
+            "plantilla_sino": os.environ.get("PLANTILLA_SINO", "plantilla_dinamica"),
+            "plantilla_abierta": os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
+        }
+
+    def iso(v):
+        return v.strftime("%Y-%m-%dT%H:%M:%S") if v else None
+
+    return {
+        "id": row["id"],
+        "texto": row["texto"],
+        "tipo": row["tipo"],
+        "min": row["minimo"],
+        "max": row["maximo"],
+        "cierre": iso(row["cierre"]),
+        "activa": row["activa"],
+        "estado": row["estado"],
+        "fecha_creacion": iso(row["fecha_creacion"]),
+        "fecha_lanzamiento": iso(row["fecha_lanzamiento"]),
+        "fecha_cierre_real": iso(row["fecha_cierre_real"]),
+        "destinatarios": row["destinatarios"],
+        "plantilla_sino": os.environ.get("PLANTILLA_SINO", "plantilla_dinamica"),
+        "plantilla_abierta": os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
+    }
+
+
+def obtener_ultima_encuesta():
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM encuestas ORDER BY id DESC LIMIT 1")
+            return cur.fetchone()
+
+
+def obtener_encuesta(id_encuesta):
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM encuestas WHERE id = %s", (id_encuesta,))
+            return cur.fetchone()
+
 
 def cargar_encuesta():
-    e = cargar_json("encuesta.json")
-    if not e:
-        e = {"texto": "", "tipo": "sino", "min": None, "max": None, "cierre": None, "activa": False}
-    # Siempre usar variables de entorno para los nombres de plantilla
-    e["plantilla_sino"]    = os.environ.get("PLANTILLA_SINO", "plantilla_dinamica")
-    e["plantilla_abierta"] = os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
-    return e
+    return _encuesta_dict(obtener_ultima_encuesta())
+
+
+def guardar_nueva_encuesta(d):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO encuestas
+                    (texto, tipo, minimo, maximo, cierre, activa, estado)
+                VALUES (%s, %s, %s, %s, %s, FALSE, 'BORRADOR')
+                RETURNING id
+            """, (
+                d.get("texto", ""),
+                d.get("tipo", "sino"),
+                d.get("min"),
+                d.get("max"),
+                _fecha_db(d.get("cierre"))
+            ))
+            encuesta_id = cur.fetchone()[0]
+        conn.commit()
+    return encuesta_id
+
+
+def actualizar_encuesta(id_encuesta, d):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET texto=%s, tipo=%s, minimo=%s, maximo=%s, cierre=%s
+                WHERE id=%s
+            """, (
+                d.get("texto", ""),
+                d.get("tipo", "sino"),
+                d.get("min"),
+                d.get("max"),
+                _fecha_db(d.get("cierre")),
+                id_encuesta
+            ))
+        conn.commit()
+
 
 def estado_encuesta():
     """
-    Devuelve el estado real de la encuesta para el panel:
-    - SIN_CONFIGURAR
-    - PENDIENTE
-    - ACTIVA
-    - CERRADA
+    Estado real de la encuesta actual:
+    SIN_CONFIGURAR / BORRADOR / PENDIENTE / ACTIVA / CERRADA
     """
     e = cargar_encuesta()
-
-    if not e.get("texto"):
+    if not e.get("id") or not e.get("texto"):
         return "SIN_CONFIGURAR"
 
-    # Si está marcada como activa, comprobamos también la fecha de cierre.
     if e.get("activa"):
         if e.get("cierre"):
-            try:
-                cierre_str = e["cierre"]
-                if len(cierre_str) == 16:
-                    cierre_str += ":00"
-                cierre = datetime.fromisoformat(cierre_str)
-
+            cierre = _fecha_db(e["cierre"])
+            if cierre:
                 from datetime import timezone, timedelta
                 offset = int(os.environ.get("TZ_OFFSET", "2"))
                 ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
-
                 if ahora > cierre:
                     return "CERRADA"
-            except Exception:
-                pass
         return "ACTIVA"
 
-    # No está activa: si la fecha futura aún no ha llegado, está pendiente.
-    if e.get("cierre"):
-        try:
-            cierre_str = e["cierre"]
-            if len(cierre_str) == 16:
-                cierre_str += ":00"
-            cierre = datetime.fromisoformat(cierre_str)
+    if e.get("estado") == "BORRADOR":
+        if e.get("cierre"):
+            cierre = _fecha_db(e["cierre"])
+            if cierre:
+                from datetime import timezone, timedelta
+                offset = int(os.environ.get("TZ_OFFSET", "2"))
+                ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
+                if ahora <= cierre:
+                    return "PENDIENTE"
+        return "BORRADOR"
 
-            from datetime import timezone, timedelta
-            offset = int(os.environ.get("TZ_OFFSET", "2"))
-            ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
-
-            if ahora <= cierre:
-                return "PENDIENTE"
-        except Exception:
-            pass
-
-    return "CERRADA"
+    return e.get("estado", "BORRADOR")
 
 
 def encuesta_abierta():
-    e = cargar_encuesta()
-    if not e.get("activa"):
-        return False
-    if e.get("cierre"):
-        try:
-            cierre_str = e["cierre"]
-            if len(cierre_str) == 16:
-                cierre_str += ":00"
-            cierre = datetime.fromisoformat(cierre_str)
-            # Render corre en UTC, España es UTC+2 en verano
-            from datetime import timezone, timedelta
-            offset = int(os.environ.get("TZ_OFFSET", "2"))
-            ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
-            print(f"⏰ Ahora (local): {ahora} | Cierre: {cierre}")
-            if ahora > cierre:
-                return False
-        except Exception as ex:
-            print(f"⚠️ Error parseando cierre: {ex}")
-    return True
+    return estado_encuesta() == "ACTIVA"
+
 
 def guardar_voto(numero, respuesta):
-    votos = cargar_json("votos.json")
-    votos[numero] = {"respuesta": respuesta, "hora": datetime.now().strftime("%H:%M %d/%m/%Y")}
-    guardar_json("votos.json", votos)
+    e = cargar_encuesta()
+    if not e.get("id"):
+        return
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO votos (encuesta_id, telefono, respuesta)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (encuesta_id, telefono)
+                DO UPDATE SET respuesta = EXCLUDED.respuesta,
+                              fecha = CURRENT_TIMESTAMP
+            """, (e["id"], numero, respuesta))
+
+            cur.execute("""
+                INSERT INTO estados_participantes
+                    (encuesta_id, telefono, estado)
+                VALUES (%s, %s, 'confirmado')
+                ON CONFLICT (encuesta_id, telefono)
+                DO UPDATE SET estado='confirmado',
+                              fecha_actualizacion=CURRENT_TIMESTAMP
+            """, (e["id"], numero))
+        conn.commit()
+
     print(f"✅ Voto: {numero} → {respuesta}")
 
-def resumen_votos():
-    votos = cargar_json("votos.json")
-    total = len(votos)
-    conteo = {}
-    for v in votos.values():
-        r = v["respuesta"]
-        conteo[r] = conteo.get(r, 0) + 1
-    return {"total": total, "conteo": conteo}
+
+def guardar_estado_participante(numero, nuevo_estado):
+    e = cargar_encuesta()
+    if not e.get("id"):
+        return
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO estados_participantes
+                    (encuesta_id, telefono, estado)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (encuesta_id, telefono)
+                DO UPDATE SET estado=EXCLUDED.estado,
+                              fecha_actualizacion=CURRENT_TIMESTAMP
+            """, (e["id"], numero, nuevo_estado))
+        conn.commit()
+
+
+def cargar_estado_participante(numero):
+    e = cargar_encuesta()
+    if not e.get("id"):
+        return "esperando_respuesta"
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT estado
+                FROM estados_participantes
+                WHERE encuesta_id=%s AND telefono=%s
+            """, (e["id"], numero))
+            row = cur.fetchone()
+    return row[0] if row else "esperando_respuesta"
+
+
+def resumen_votos(id_encuesta=None):
+    if id_encuesta is None:
+        e = cargar_encuesta()
+        id_encuesta = e.get("id")
+
+    if not id_encuesta:
+        return {"total": 0, "conteo": {}}
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT respuesta, COUNT(*)
+                FROM votos
+                WHERE encuesta_id=%s
+                GROUP BY respuesta
+            """, (id_encuesta,))
+            rows = cur.fetchall()
+
+    conteo = {r: n for r, n in rows}
+    return {"total": sum(conteo.values()), "conteo": conteo}
+
+
+def listar_encuestas():
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT e.*,
+                       COUNT(v.id)::INTEGER AS respuestas
+                FROM encuestas e
+                LEFT JOIN votos v ON v.encuesta_id=e.id
+                GROUP BY e.id
+                ORDER BY e.id DESC
+            """)
+            return cur.fetchall()
+
+
+def migrar_json_si_es_necesario():
+    """
+    Migración única de seguridad: si existían encuesta/votos/estados en /tmp
+    y la base de datos está vacía, los copia a PostgreSQL.
+    """
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM encuestas")
+            if cur.fetchone()[0] > 0:
+                return
+
+    encuesta_path = os.path.join(DATA_DIR, "encuesta.json")
+    votos_path = os.path.join(DATA_DIR, "votos.json")
+    estados_path = os.path.join(DATA_DIR, "estados.json")
+
+    try:
+        with open(encuesta_path, encoding="utf-8") as f:
+            old_e = json.load(f)
+    except Exception:
+        return
+
+    encuesta_id = guardar_nueva_encuesta(old_e)
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET activa=%s, estado=%s, fecha_lanzamiento=%s
+                WHERE id=%s
+            """, (
+                bool(old_e.get("activa")),
+                "ACTIVA" if old_e.get("activa") else "BORRADOR",
+                datetime.now() if old_e.get("activa") else None,
+                encuesta_id
+            ))
+
+    try:
+        with open(votos_path, encoding="utf-8") as f:
+            old_votos = json.load(f)
+        for numero, voto in old_votos.items():
+            guardar_voto(numero, voto.get("respuesta", ""))
+    except Exception:
+        pass
+
+    try:
+        with open(estados_path, encoding="utf-8") as f:
+            old_estados = json.load(f)
+        for numero, estado in old_estados.items():
+            guardar_estado_participante(numero, estado)
+    except Exception:
+        pass
+
+    print("✅ Migración inicial de JSON → PostgreSQL completada")
+
+
+# Inicializar DB al arrancar.
+try:
+    init_db()
+    migrar_json_si_es_necesario()
+    print("🗄️ PostgreSQL conectado correctamente")
+except Exception as ex:
+    print(f"❌ Error conectando con PostgreSQL: {ex}")
+    raise
 
 
 # ═══════════════════════════════════════════════════
@@ -236,8 +488,7 @@ def formato_instrucciones(encuesta):
 # ═══════════════════════════════════════════════════
 
 def procesar(numero, texto=None, button_id=None):
-    estados  = cargar_json("estados.json")
-    estado   = estados.get(numero, "esperando_respuesta")
+    estado   = cargar_estado_participante(numero)
     encuesta = cargar_encuesta()
 
     print(f"📊 {numero} | estado: {estado} | texto: {texto} | btn: {button_id}")
@@ -247,8 +498,7 @@ def procesar(numero, texto=None, button_id=None):
         if not encuesta_abierta():
             enviar_texto(numero, "⏰ La encuesta ya está cerrada. No es posible cambiar la respuesta.")
             return
-        estados[numero] = "esperando_cambio"
-        guardar_json("estados.json", estados)
+        guardar_estado_participante(numero, "esperando_cambio")
         enviar_plantilla(numero, encuesta)
         return
 
@@ -267,8 +517,7 @@ def procesar(numero, texto=None, button_id=None):
                 return
             valor = "SÍ" if es_si else "NO"
             guardar_voto(numero, valor)
-            estados[numero] = "confirmado"
-            guardar_json("estados.json", estados)
+            guardar_estado_participante(numero, "confirmado")
             enviar_confirmacion(numero, valor)
             return
 
@@ -407,64 +656,200 @@ def resultados():
 
 
 # ═══════════════════════════════════════════════════
-# API CECO
+# API DE ADMINISTRACIÓN
 # ═══════════════════════════════════════════════════
 
 @app.route("/api/encuesta", methods=["GET"])
 def api_get_encuesta():
-    if not autenticado(): return jsonify({"error": "No autorizado"}), 401
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
     return jsonify(cargar_encuesta())
+
 
 @app.route("/api/encuesta", methods=["POST"])
 def api_set_encuesta():
-    if not autenticado(): return jsonify({"error": "No autorizado"}), 401
-    d = request.json
-    encuesta = {
-        "texto":    d.get("texto",""),
-        "tipo":     d.get("tipo","sino"),
-        "plantilla_sino":     d.get("plantilla_sino", "plantilla_dinamica"),
-        "plantilla_abierta":  d.get("plantilla_abierta", "plantilla_dinamica"),
-        "min":      d.get("min"),
-        "max":      d.get("max"),
-        "cierre":   d.get("cierre"),
-        "activa":   cargar_encuesta().get("activa", False)
-    }
-    guardar_json("encuesta.json", encuesta)
-    return jsonify({"ok": True})
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    d = request.json or {}
+    actual = cargar_encuesta()
+
+    # Si no hay encuesta, crea la primera.
+    if not actual.get("id"):
+        encuesta_id = guardar_nueva_encuesta(d)
+    else:
+        # Si la actual está activa, no creamos una nueva accidentalmente.
+        # Para la primera versión del panel, editar mantiene la misma encuesta.
+        encuesta_id = actual["id"]
+        actualizar_encuesta(encuesta_id, d)
+
+    return jsonify({"ok": True, "id": encuesta_id})
+
 
 @app.route("/api/lanzar", methods=["POST"])
 def api_lanzar():
-    if not autenticado(): return jsonify({"error": "No autorizado"}), 401
-    d        = request.json
-    numeros  = d.get("numeros", [])
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    d = request.json or {}
+    numeros = d.get("numeros", [])
     encuesta = cargar_encuesta()
-    encuesta["activa"] = True
-    guardar_json("encuesta.json", encuesta)
-    guardar_json("estados.json", {})
-    guardar_json("votos.json", {})
+
+    if not encuesta.get("id") or not encuesta.get("texto"):
+        return jsonify({"ok": False, "error": "No hay una encuesta configurada"}), 400
+
+    # Limpiar espacios, signos y duplicados.
+    numeros_limpios = []
+    vistos = set()
+    for n in numeros:
+        n = str(n).strip().replace(" ", "").replace("+", "")
+        if n and n not in vistos:
+            vistos.add(n)
+            numeros_limpios.append(n)
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET activa=TRUE,
+                    estado='ACTIVA',
+                    fecha_lanzamiento=CURRENT_TIMESTAMP,
+                    fecha_cierre_real=NULL,
+                    destinatarios=%s
+                WHERE id=%s
+            """, (len(numeros_limpios), encuesta["id"]))
+
+            # Los estados de esta encuesta se reinician al lanzarla.
+            cur.execute(
+                "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                (encuesta["id"],)
+            )
+            cur.execute(
+                "DELETE FROM votos WHERE encuesta_id=%s",
+                (encuesta["id"],)
+            )
+        conn.commit()
+
+    encuesta = cargar_encuesta()
 
     enviados, errores = 0, []
-    for n in numeros:
-        n = n.strip().replace(" ","").replace("+","")
-        if not n: continue
+    for n in numeros_limpios:
         try:
             enviar_plantilla(n, encuesta)
-            estados = cargar_json("estados.json")
-            estados[n] = "esperando_respuesta"
-            guardar_json("estados.json", estados)
+            guardar_estado_participante(n, "esperando_respuesta")
             enviados += 1
         except Exception as e:
             errores.append({"numero": n, "error": str(e)})
 
-    return jsonify({"ok": True, "enviados": enviados, "errores": errores})
+    return jsonify({
+        "ok": True,
+        "enviados": enviados,
+        "errores": errores
+    })
+
 
 @app.route("/api/cerrar", methods=["POST"])
 def api_cerrar():
-    if not autenticado(): return jsonify({"error": "No autorizado"}), 401
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
     e = cargar_encuesta()
-    e["activa"] = False
-    guardar_json("encuesta.json", e)
+    if not e.get("id"):
+        return jsonify({"ok": False, "error": "No hay encuesta"}), 400
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET activa=FALSE,
+                    estado='CERRADA',
+                    fecha_cierre_real=CURRENT_TIMESTAMP
+                WHERE id=%s
+            """, (e["id"],))
+        conn.commit()
+
     return jsonify({"ok": True})
+
+
+@app.route("/api/encuestas", methods=["GET"])
+def api_encuestas():
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    rows = listar_encuestas()
+    salida = []
+    for row in rows:
+        item = dict(row)
+        for k in ["fecha_creacion", "fecha_lanzamiento", "fecha_cierre_real", "cierre"]:
+            if item.get(k):
+                item[k] = item[k].strftime("%Y-%m-%dT%H:%M:%S")
+        item["activa"] = bool(item["activa"])
+        salida.append(item)
+
+    return jsonify({"encuestas": salida})
+
+
+# API antigua /api/votos mantenida como alias temporal.
+@app.route("/api/votos", methods=["GET"])
+def api_votos_legacy():
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    e = cargar_encuesta()
+    if not e.get("id"):
+        return jsonify({"total": 0, "votos": {}})
+
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT telefono, respuesta, fecha
+                FROM votos
+                WHERE encuesta_id=%s
+                ORDER BY fecha ASC
+            """, (e["id"],))
+            rows = cur.fetchall()
+
+    votos = {
+        row["telefono"]: {
+            "respuesta": row["respuesta"],
+            "hora": row["fecha"].strftime("%H:%M %d/%m/%Y")
+        }
+        for row in rows
+    }
+    return jsonify({"total": len(votos), "votos": votos})
+
+
+@app.route("/api/resetear", methods=["POST"])
+def api_resetear_legacy():
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    e = cargar_encuesta()
+    if e.get("id"):
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM votos WHERE encuesta_id=%s", (e["id"],))
+                cur.execute(
+                    "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                    (e["id"],)
+                )
+            conn.commit()
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pregunta", methods=["GET"])
+def api_pregunta_legacy():
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+    e = cargar_encuesta()
+    return jsonify({
+        "texto": e.get("texto", ""),
+        "tipo": e.get("tipo", "sino"),
+        "min": e.get("min"),
+        "max": e.get("max"),
+        "plantilla": e.get("plantilla_sino", "plantilla_dinamica")
+    })
 
 
 # ═══════════════════════════════════════════════════
@@ -474,16 +859,18 @@ def api_cerrar():
 @app.route("/api/resultados")
 def api_resultados():
     encuesta = cargar_encuesta()
-    res      = resumen_votos()
+    res = resumen_votos()
     estado = estado_encuesta()
+
     return jsonify({
-        "pregunta": encuesta.get("texto",""),
-        "tipo":     encuesta.get("tipo","sino"),
-        "cierre":   encuesta.get("cierre"),
-        "activa":   estado == "ACTIVA",
-        "estado":   estado,
-        "total":    res["total"],
-        "conteo":   res["conteo"]
+        "pregunta": encuesta.get("texto", ""),
+        "tipo": encuesta.get("tipo", "sino"),
+        "cierre": encuesta.get("cierre"),
+        "activa": estado == "ACTIVA",
+        "estado": estado,
+        "total": res["total"],
+        "conteo": res["conteo"],
+        "destinatarios": encuesta.get("destinatarios", 0)
     })
 
 
