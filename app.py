@@ -174,18 +174,30 @@ def _encuesta_dict(row):
 
 
 def obtener_ultima_encuesta():
+    """Última encuesta creada; es la encuesta de trabajo del panel."""
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM encuestas ORDER BY id DESC LIMIT 1")
+            return cur.fetchone()
+
+
+def obtener_encuesta_activa():
+    """Única encuesta que puede recibir respuestas por WhatsApp."""
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT *
-                FROM encuestas
-                ORDER BY id DESC
-                LIMIT 1
+                SELECT * FROM encuestas
+                WHERE activa=TRUE AND estado='ACTIVA'
+                ORDER BY id DESC LIMIT 1
             """)
             return cur.fetchone()
 
 
-def obtener_encuesta(id_encuesta):
+def cargar_encuesta_activa():
+    return _encuesta_dict(obtener_encuesta_activa())
+
+
+def obtener_encuesta(id_encuesta):def obtener_encuesta(id_encuesta):
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
@@ -282,7 +294,7 @@ def encuesta_abierta():
 # ============================================================
 
 def guardar_voto(numero, respuesta):
-    e = cargar_encuesta()
+    e = cargar_encuesta_activa()
 
     if not e.get("id"):
         return
@@ -315,7 +327,7 @@ def guardar_voto(numero, respuesta):
 
 
 def guardar_estado_participante(numero, nuevo_estado):
-    e = cargar_encuesta()
+    e = cargar_encuesta_activa()
 
     if not e.get("id"):
         return
@@ -336,7 +348,7 @@ def guardar_estado_participante(numero, nuevo_estado):
 
 
 def cargar_estado_participante(numero):
-    e = cargar_encuesta()
+    e = cargar_encuesta_activa()
 
     if not e.get("id"):
         return "esperando_respuesta"
@@ -696,7 +708,7 @@ def formato_instrucciones(encuesta):
 
 def procesar(numero, texto=None, button_id=None):
     estado = cargar_estado_participante(numero)
-    encuesta = cargar_encuesta()
+    encuesta = cargar_encuesta_activa()
 
     print(
         f"📊 {numero} | estado: {estado} | "
@@ -1027,258 +1039,179 @@ def api_set_encuesta():
     if not autenticado():
         return jsonify({"error": "No autorizado"}), 401
 
-    d = request.json or {}
-    actual = cargar_encuesta()
+    d=request.json or {}
+    modo=d.get("modo","editar")
+    id_encuesta=d.get("id")
 
-    # Primera encuesta.
-    if not actual.get("id"):
-        encuesta_id = guardar_nueva_encuesta(d)
+    if modo=="nueva":
+        encuesta_id=guardar_nueva_encuesta(d)
+        return jsonify({"ok":True,"id":encuesta_id,"nueva":True})
 
-    # De momento, editar conserva la encuesta actual.
+    if id_encuesta:
+        try: id_encuesta=int(id_encuesta)
+        except Exception: return jsonify({"ok":False,"error":"ID inválido"}),400
+        e=obtener_encuesta(id_encuesta)
+        if not e: return jsonify({"ok":False,"error":"Encuesta no encontrada"}),404
+        if e["activa"]:
+            return jsonify({"ok":False,"error":"No puedes editar una encuesta activa. Ciérrala primero."}),400
+        actualizar_encuesta(id_encuesta,d)
+        return jsonify({"ok":True,"id":id_encuesta,"nueva":False})
+
+    e=obtener_ultima_encuesta()
+    if not e:
+        encuesta_id=guardar_nueva_encuesta(d)
     else:
-        encuesta_id = actual["id"]
-        actualizar_encuesta(
-            encuesta_id,
-            d
-        )
-
-    return jsonify({
-        "ok": True,
-        "id": encuesta_id
-    })
+        if e["activa"]:
+            return jsonify({"ok":False,"error":"La encuesta está activa. Ciérrala primero."}),400
+        encuesta_id=e["id"]
+        actualizar_encuesta(encuesta_id,d)
+    return jsonify({"ok":True,"id":encuesta_id,"nueva":False})
 
 
 @app.route("/api/lanzar", methods=["POST"])
 def api_lanzar():
     if not autenticado():
-        return jsonify({"error": "No autorizado"}), 401
+        return jsonify({"error":"No autorizado"}),401
 
-    d = request.json or {}
-    numeros = d.get("numeros", [])
-    encuesta = cargar_encuesta()
+    d=request.json or {}
+    numeros=d.get("numeros",[])
+    id_solicitada=d.get("id")
+    encuesta=obtener_encuesta(int(id_solicitada)) if id_solicitada else obtener_ultima_encuesta()
 
-    if not encuesta.get("id") or not encuesta.get("texto"):
-        return jsonify({
-            "ok": False,
-            "error": "No hay una encuesta configurada"
-        }), 400
+    if not encuesta or not encuesta["texto"]:
+        return jsonify({"ok":False,"error":"No hay una encuesta configurada"}),400
 
-    # Limpiar espacios, signos + y duplicados.
-    numeros_limpios = []
-    vistos = set()
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id FROM encuestas
+                WHERE activa=TRUE AND id<>%s
+                LIMIT 1
+            """,(encuesta["id"],))
+            otra=cur.fetchone()
 
+    if otra:
+        return jsonify({"ok":False,"error":f"Ya hay una encuesta activa (#{otra['id']}). Ciérrala antes de lanzar la nueva."}),409
+
+    numeros_limpios=[]; vistos=set()
     for n in numeros:
-        n = (
-            str(n)
-            .strip()
-            .replace(" ", "")
-            .replace("+", "")
-        )
-
+        n=str(n).strip().replace(" ","").replace("+","")
         if n and n not in vistos:
-            vistos.add(n)
-            numeros_limpios.append(n)
+            vistos.add(n); numeros_limpios.append(n)
 
-    # Activar encuesta y borrar respuestas anteriores
-    # de ESTA encuesta.
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE encuestas
-                SET activa=TRUE,
-                    estado='ACTIVA',
+                SET activa=TRUE, estado='ACTIVA',
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
-                    fecha_cierre_real=NULL,
-                    destinatarios=%s
+                    fecha_cierre_real=NULL, destinatarios=%s
                 WHERE id=%s
-            """, (
-                len(numeros_limpios),
-                encuesta["id"]
-            ))
-
-            cur.execute(
-                """
-                DELETE FROM estados_participantes
-                WHERE encuesta_id=%s
-                """,
-                (encuesta["id"],)
-            )
-
-            cur.execute(
-                """
-                DELETE FROM votos
-                WHERE encuesta_id=%s
-                """,
-                (encuesta["id"],)
-            )
-
+            """,(len(numeros_limpios),encuesta["id"]))
+            cur.execute("DELETE FROM estados_participantes WHERE encuesta_id=%s",(encuesta["id"],))
+            cur.execute("DELETE FROM votos WHERE encuesta_id=%s",(encuesta["id"],))
         conn.commit()
 
-    encuesta = cargar_encuesta()
-
-    enviados = 0
-    errores = []
-
+    encuesta=cargar_encuesta_activa()
+    enviados=0; errores=[]
     for n in numeros_limpios:
         try:
-            enviar_plantilla(
-                n,
-                encuesta
-            )
+            enviar_plantilla(n,encuesta)
+            guardar_estado_participante(n,"esperando_respuesta")
+            enviados+=1
+        except Exception as ex:
+            errores.append({"numero":n,"error":str(ex)})
 
-            guardar_estado_participante(
-                n,
-                "esperando_respuesta"
-            )
-
-            enviados += 1
-
-        except Exception as e:
-            errores.append({
-                "numero": n,
-                "error": str(e)
-            })
-
-    return jsonify({
-        "ok": True,
-        "enviados": enviados,
-        "errores": errores
-    })
+    return jsonify({"ok":True,"encuesta_id":encuesta["id"],"enviados":enviados,"errores":errores})
 
 
 @app.route("/api/cerrar", methods=["POST"])
 def api_cerrar():
     if not autenticado():
-        return jsonify({"error": "No autorizado"}), 401
-
-    e = cargar_encuesta()
-
-    if not e.get("id"):
-        return jsonify({
-            "ok": False,
-            "error": "No hay encuesta"
-        }), 400
-
+        return jsonify({"error":"No autorizado"}),401
+    d=request.json or {}
+    id_encuesta=d.get("id")
+    e=obtener_encuesta(int(id_encuesta)) if id_encuesta else obtener_encuesta_activa()
+    if not e:
+        return jsonify({"ok":False,"error":"No hay encuesta activa"}),400
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE encuestas
-                SET activa=FALSE,
-                    estado='CERRADA',
+                SET activa=FALSE, estado='CERRADA',
                     fecha_cierre_real=CURRENT_TIMESTAMP
                 WHERE id=%s
-            """, (e["id"],))
-
+            """,(e["id"],))
         conn.commit()
-
-    return jsonify({"ok": True})
+    return jsonify({"ok":True,"id":e["id"]})
 
 
 @app.route("/api/encuestas", methods=["GET"])
 def api_encuestas():
     if not autenticado():
-        return jsonify({"error": "No autorizado"}), 401
-
-    rows = listar_encuestas()
-    salida = []
-
+        return jsonify({"error":"No autorizado"}),401
+    rows=listar_encuestas()
+    salida=[]
     for row in rows:
-        item = dict(row)
-
-        for k in [
-            "fecha_creacion",
-            "fecha_lanzamiento",
-            "fecha_cierre_real",
-            "cierre"
-        ]:
-            if item.get(k):
-                item[k] = _fecha_iso(item[k])
-
-        item["activa"] = bool(item["activa"])
-        salida.append(item)
-
-    return jsonify({
-        "encuestas": salida
-    })
+        x=dict(row)
+        for k in ["fecha_creacion","fecha_lanzamiento","fecha_cierre_real","cierre"]:
+            if x.get(k): x[k]=_fecha_iso(x[k])
+        x["activa"]=bool(x["activa"])
+        if x["activa"]: st="ACTIVA"
+        elif x.get("estado")=="CERRADA": st="CERRADA"
+        elif x.get("estado")=="BORRADOR":
+            dt=_fecha_db(x.get("cierre"))
+            st="PROGRAMADA" if dt and _ahora_local()<=dt else "BORRADOR"
+        else: st=x.get("estado","BORRADOR")
+        x["estado_calculado"]=st
+        salida.append(x)
+    return jsonify({"encuestas":salida,"activa_id":next((x["id"] for x in salida if x["activa"]),None)})
 
 
-# ============================================================
+@app.route("/api/encuestas/<int:id_encuesta>", methods=["GET"])
+def api_encuesta_detalle(id_encuesta):
+    if not autenticado():
+        return jsonify({"error":"No autorizado"}),401
+    e=obtener_encuesta(id_encuesta)
+    if not e: return jsonify({"error":"Encuesta no encontrada"}),404
+    x=_encuesta_dict(e); r=resumen_votos(id_encuesta)
+    x["respuestas"]=r["total"]; x["conteo"]=r["conteo"]
+    return jsonify(x)
+
+
 # API LEGACY /api/votos
 # ============================================================
 
 @app.route("/api/votos", methods=["GET"])
 def api_votos_legacy():
     if not autenticado():
-        return jsonify({"error": "No autorizado"}), 401
-
-    e = cargar_encuesta()
-
-    if not e.get("id"):
-        return jsonify({
-            "total": 0,
-            "votos": {}
-        })
-
+        return jsonify({"error":"No autorizado"}),401
+    id_encuesta=request.args.get("id",type=int)
+    e=obtener_encuesta(id_encuesta) if id_encuesta else (obtener_encuesta_activa() or obtener_ultima_encuesta())
+    if not e: return jsonify({"total":0,"votos":{}})
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("""
-                SELECT telefono, respuesta, fecha
-                FROM votos
-                WHERE encuesta_id=%s
-                ORDER BY fecha ASC
-            """, (e["id"],))
-
-            rows = cur.fetchall()
-
-    votos = {
-        row["telefono"]: {
-            "respuesta": row["respuesta"],
-            "hora": (
-                row["fecha"].strftime(
-                    "%H:%M %d/%m/%Y"
-                )
-                if row["fecha"]
-                else ""
-            )
-        }
-        for row in rows
-    }
-
-    return jsonify({
-        "total": len(votos),
-        "votos": votos
-    })
+            cur.execute("SELECT telefono,respuesta,fecha FROM votos WHERE encuesta_id=%s ORDER BY fecha ASC",(e["id"],))
+            rows=cur.fetchall()
+    votos={x["telefono"]:{
+        "respuesta":x["respuesta"],
+        "hora":x["fecha"].strftime("%H:%M %d/%m/%Y") if x["fecha"] else ""
+    } for x in rows}
+    return jsonify({"encuesta_id":e["id"],"total":len(votos),"votos":votos})
 
 
 @app.route("/api/resetear", methods=["POST"])
 def api_resetear_legacy():
-    if not autenticado():
-        return jsonify({"error": "No autorizado"}), 401
-
-    e = cargar_encuesta()
-
-    if e.get("id"):
+    if not autenticado(): return jsonify({"error":"No autorizado"}),401
+    d=request.json or {}; id_encuesta=d.get("id")
+    e=obtener_encuesta(int(id_encuesta)) if id_encuesta else (obtener_encuesta_activa() or obtener_ultima_encuesta())
+    if e:
         with db_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    DELETE FROM votos
-                    WHERE encuesta_id=%s
-                    """,
-                    (e["id"],)
-                )
-
-                cur.execute(
-                    """
-                    DELETE FROM estados_participantes
-                    WHERE encuesta_id=%s
-                    """,
-                    (e["id"],)
-                )
-
+                cur.execute("DELETE FROM votos WHERE encuesta_id=%s",(e["id"],))
+                cur.execute("DELETE FROM estados_participantes WHERE encuesta_id=%s",(e["id"],))
             conn.commit()
-
-    return jsonify({"ok": True})
+    return jsonify({"ok":True,"id":e["id"] if e else None})
 
 
 @app.route("/api/pregunta", methods=["GET"])
@@ -1306,23 +1239,39 @@ def api_pregunta_legacy():
 
 @app.route("/api/resultados")
 def api_resultados():
-    encuesta = cargar_encuesta()
-    res = resumen_votos()
-    estado = estado_encuesta()
+    id_encuesta=request.args.get("id",type=int)
+    if id_encuesta:
+        encuesta=_encuesta_dict(obtener_encuesta(id_encuesta))
+    else:
+        encuesta=cargar_encuesta_activa()
+        if not encuesta.get("id"): encuesta=cargar_encuesta()
 
+    if not encuesta.get("id"):
+        return jsonify({"pregunta":"","tipo":"sino","cierre":None,"activa":False,"estado":"SIN_CONFIGURAR","total":0,"conteo":{},"destinatarios":0,"encuesta_id":None})
+
+    r=resumen_votos(encuesta["id"])
     return jsonify({
-        "pregunta": encuesta.get("texto", ""),
-        "tipo": encuesta.get("tipo", "sino"),
-        "cierre": encuesta.get("cierre"),
-        "activa": estado == "ACTIVA",
-        "estado": estado,
-        "total": res["total"],
-        "conteo": res["conteo"],
-        "destinatarios": encuesta.get(
-            "destinatarios",
-            0
-        )
+        "pregunta":encuesta.get("texto",""),
+        "tipo":encuesta.get("tipo","sino"),
+        "cierre":encuesta.get("cierre"),
+        "activa":bool(encuesta.get("activa")),
+        "estado":"ACTIVA" if encuesta.get("activa") else encuesta.get("estado","BORRADOR"),
+        "total":r["total"],"conteo":r["conteo"],
+        "destinatarios":encuesta.get("destinatarios",0),
+        "encuesta_id":encuesta["id"]
     })
+
+
+@app.route("/health")
+def health():
+    try:
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        return jsonify({"ok":True,"database":"postgresql"})
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
 
 
 # ============================================================
