@@ -1,564 +1,558 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel de gestión — Mercado de Predicciones</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de gestión — Mercado de Predicciones</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f5f7fa;--surface:#fff;--surface2:#f8fafc;--border:#e5e7eb;
+  --text:#172033;--muted:#718096;--primary:#087f5b;--primary2:#099268;
+  --danger:#d9485f;--warning:#d97706;--sidebar:#172033;
+}
+body{font-family:Inter,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer}
 
-    body {
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #f0f2f5;
-      color: #1a1a2e;
-      min-height: 100vh;
-    }
+.layout{display:flex;min-height:100vh}
+.sidebar{
+  width:235px;background:var(--sidebar);color:#fff;position:fixed;inset:0 auto 0 0;
+  display:flex;flex-direction:column;padding:22px 14px;z-index:10
+}
+.brand{padding:4px 12px 26px;font-weight:800;font-size:18px}
+.brand small{display:block;color:#8fa0b8;font-size:11px;font-weight:500;margin-top:4px}
+.nav{display:grid;gap:4px}
+.nav button{
+  border:0;background:transparent;color:#aebbd0;text-align:left;padding:11px 12px;
+  border-radius:8px;font-size:13px;font-weight:600
+}
+.nav button:hover,.nav button.active{background:#243149;color:#fff}
+.sidebar-bottom{margin-top:auto;padding:12px}
+.logout{color:#aebbd0;text-decoration:none;font-size:12px}
+.logout:hover{color:#fff}
 
-    header {
-      background: #1a1a2e;
-      color: white;
-      padding: 20px 32px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    header .logo { font-size: 22px; }
-    header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
-    header span { font-size: 13px; opacity: 0.5; margin-left: auto; }
+.content{margin-left:235px;width:calc(100% - 235px);min-height:100vh}
+.topbar{
+  height:64px;background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 30px
+}
+.topbar h1{font-size:18px}
+.topbar-right{margin-left:auto;color:var(--muted);font-size:12px}
 
-    main {
-      max-width: 860px;
-      margin: 32px auto;
-      padding: 0 20px;
-      display: grid;
-      gap: 24px;
-    }
+main{max-width:1180px;margin:0 auto;padding:30px}
+.page{display:none}.page.active{display:block}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.page-head h2{font-size:23px;letter-spacing:-.5px}
+.page-head p{font-size:13px;color:var(--muted);margin-top:5px}
 
-    .card {
-      background: white;
-      border-radius: 12px;
-      padding: 28px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    }
+.btn{
+  border:0;border-radius:8px;padding:10px 16px;font-size:13px;font-weight:700;
+  transition:.15s
+}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary2)}
+.btn-secondary{background:#fff;border:1px solid var(--border);color:var(--text)}
+.btn-secondary:hover{background:var(--surface2)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 
-    .card h2 {
-      font-size: 15px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #666;
-      margin-bottom: 20px;
-    }
+.grid-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.stat-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px
+}
+.stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:700}
+.stat-value{font-size:28px;font-weight:800;margin-top:8px}
+.stat-sub{font-size:12px;color:var(--muted);margin-top:4px}
 
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: #444;
-      margin-bottom: 6px;
-      margin-top: 16px;
-    }
-    label:first-of-type { margin-top: 0; }
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:22px;margin-bottom:18px
+}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.card-title{font-size:14px;font-weight:800}
+.muted{color:var(--muted);font-size:12px}
 
-    input[type="text"], input[type="number"], textarea, select {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1.5px solid #e0e0e0;
-      border-radius: 8px;
-      font-size: 14px;
-      font-family: inherit;
-      color: #1a1a2e;
-      transition: border-color 0.2s;
-      background: #fafafa;
-    }
-    input:focus, textarea:focus, select:focus {
-      outline: none;
-      border-color: #25d366;
-      background: white;
-    }
-    textarea { resize: vertical; min-height: 80px; }
+.active-survey{border-left:4px solid var(--primary)}
+.survey-question{font-size:19px;font-weight:750;line-height:1.4;margin-bottom:14px}
+.meta-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:20px;font-size:11px;font-weight:800}
+.badge-active{background:#e6f7ef;color:#087f5b}
+.badge-closed{background:#fff4df;color:#a65f00}
+.badge-draft{background:#edf2f7;color:#526174}
 
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.progress{height:9px;background:#edf1f5;border-radius:8px;overflow:hidden;margin:18px 0 8px}
+.progress-fill{height:100%;background:var(--primary);border-radius:8px;transition:width .4s}
+.progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.actions{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.actions .btn{width:auto}
 
-    .tipo-opciones {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin-top: 4px;
-    }
-    .tipo-btn {
-      border: 2px solid #e0e0e0;
-      border-radius: 8px;
-      padding: 12px 8px;
-      text-align: center;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-      color: #888;
-      transition: all 0.15s;
-      background: white;
-    }
-    .tipo-btn:hover { border-color: #25d366; color: #1a1a2e; }
-    .tipo-btn.activo { border-color: #25d366; background: #f0fff4; color: #1a1a2e; }
-    .tipo-btn .icon { font-size: 20px; display: block; margin-bottom: 4px; }
+.results-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.result-row{padding:13px 0;border-bottom:1px solid #eef1f4}
+.result-row:last-child{border-bottom:0}
+.result-top{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:7px}
+.result-bar{height:7px;background:#edf1f5;border-radius:8px;overflow:hidden}
+.result-fill{height:100%;background:var(--primary);border-radius:8px}
 
-    .rango { display: none; }
-    .rango.visible { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.table-wrap{overflow:auto}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:13px 10px;border-bottom:1px solid #edf0f3;font-size:12px}
+th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px}
+td strong{font-size:13px}
+.empty{text-align:center;padding:45px 20px;color:var(--muted);font-size:13px}
 
-    .hint {
-      font-size: 12px;
-      color: #999;
-      margin-top: 6px;
-    }
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.form-group{margin-bottom:16px}
+.form-group.full{grid-column:1/-1}
+label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.65px;font-weight:750;color:#526174;margin-bottom:7px}
+input,textarea,select{
+  width:100%;border:1px solid var(--border);background:#fff;color:var(--text);
+  border-radius:8px;padding:11px 12px;font-size:13px
+}
+textarea{min-height:100px;resize:vertical}
+input:focus,textarea:focus,select:focus{outline:0;border-color:#72bca2;box-shadow:0 0 0 3px #e8f6f0}
+.type-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.type-option{
+  border:1px solid var(--border);background:#fff;border-radius:8px;padding:13px 8px;
+  text-align:center;font-size:12px;font-weight:700;color:var(--muted)
+}
+.type-option.active{border-color:var(--primary);background:#edf9f4;color:var(--primary)}
+.range{display:none;grid-template-columns:1fr 1fr;gap:12px}
+.range.visible{display:grid}
 
-    button {
-      background: #25d366;
-      color: white;
-      border: none;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: background 0.15s;
-      width: 100%;
-      margin-top: 20px;
-    }
-    button:hover { background: #1ebe5d; }
-    button:disabled { background: #ccc; cursor: not-allowed; }
-    button.secundario {
-      background: white;
-      color: #1a1a2e;
-      border: 2px solid #e0e0e0;
-    }
-    button.secundario:hover { border-color: #aaa; background: #f5f5f5; }
-    button.peligro { background: #ff4757; }
-    button.peligro:hover { background: #e8394a; }
+.preview{
+  background:#e5ddd5;border-radius:10px;padding:18px;max-width:420px
+}
+.wa-bubble{background:#fff;border-radius:8px;padding:12px;max-width:310px;box-shadow:0 1px 2px #0002}
+.wa-name{font-size:11px;font-weight:800;color:#087f5b;margin-bottom:5px}
+.wa-text{font-size:13px;color:#333;line-height:1.45;white-space:pre-wrap}
+.wa-btn{border-top:1px solid #eee;margin-top:9px;padding-top:8px;text-align:center;color:#087fbc;font-size:13px}
+.schedule-box{background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:15px;margin-top:4px}
 
-    .dropzone {
-      border: 2px dashed #d0d0d0;
-      border-radius: 10px;
-      padding: 32px 20px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-      background: #fafafa;
-    }
-    .dropzone:hover, .dropzone.drag { border-color: #25d366; background: #f0fff4; }
-    .dropzone .icon { font-size: 32px; margin-bottom: 8px; }
-    .dropzone p { font-size: 14px; color: #666; }
-    .dropzone strong { color: #25d366; }
-    #file-input { display: none; }
+.notice{padding:12px 14px;border-radius:8px;font-size:12px;margin-bottom:16px}
+.notice-warning{background:#fff7e6;color:#8a5a00;border:1px solid #f7dfac}
+.notice-info{background:#edf6ff;color:#185a8a;border:1px solid #cfe6f8}
 
-    .numeros-preview {
-      margin-top: 16px;
-      background: #f8f8f8;
-      border-radius: 8px;
-      padding: 14px 16px;
-      font-size: 13px;
-      color: #444;
-      display: none;
-    }
-    .numeros-preview.visible { display: block; }
-    .numeros-count { font-weight: 700; color: #25d366; font-size: 16px; }
+.toast{
+ position:fixed;right:24px;bottom:24px;background:#172033;color:#fff;padding:12px 16px;
+ border-radius:9px;font-size:13px;opacity:0;transform:translateY(15px);pointer-events:none;
+ transition:.25s;z-index:100
+}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.error{background:var(--danger)}
 
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: #1a1a2e;
-      color: white;
-      padding: 14px 20px;
-      border-radius: 10px;
-      font-size: 14px;
-      font-weight: 500;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-      transform: translateY(80px);
-      opacity: 0;
-      transition: all 0.3s;
-      z-index: 100;
-    }
-    .toast.visible { transform: translateY(0); opacity: 1; }
-    .toast.ok { background: #1a1a2e; }
-    .toast.error { background: #ff4757; }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-    }
-    .stat {
-      background: #f8f8f8;
-      border-radius: 10px;
-      padding: 18px;
-      text-align: center;
-    }
-    .stat .num { font-size: 32px; font-weight: 800; color: #1a1a2e; }
-    .stat .etiq { font-size: 12px; color: #999; margin-top: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-
-    .votos-lista {
-      margin-top: 16px;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-    .voto-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 0;
-      border-bottom: 1px solid #f0f0f0;
-      font-size: 13px;
-    }
-    .voto-item:last-child { border-bottom: none; }
-    .voto-resp {
-      font-weight: 700;
-      padding: 3px 10px;
-      border-radius: 20px;
-      background: #f0fff4;
-      color: #1ebe5d;
-    }
-    .voto-hora { color: #aaa; font-size: 12px; }
-
-    .preview-whatsapp {
-      background: #e5ddd5;
-      border-radius: 10px;
-      padding: 16px;
-      margin-top: 16px;
-    }
-    .burbuja {
-      background: white;
-      border-radius: 8px;
-      padding: 12px 14px;
-      max-width: 280px;
-      font-size: 14px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-    }
-    .burbuja p { margin-bottom: 10px; line-height: 1.4; }
-    .burbuja-btn {
-      border-top: 1px solid #f0f0f0;
-      padding: 8px 0 0;
-      color: #0a9edf;
-      font-size: 14px;
-      font-weight: 500;
-      text-align: center;
-    }
-    .burbuja-btn + .burbuja-btn { border-top: 1px solid #f0f0f0; padding-top: 8px; margin-top: 4px; }
-  </style>
+@media(max-width:850px){
+ .sidebar{width:190px}.content{margin-left:190px;width:calc(100% - 190px)}
+ .grid-stats{grid-template-columns:1fr 1fr}.form-grid,.results-grid{grid-template-columns:1fr}
+}
+@media(max-width:650px){
+ .sidebar{position:static;width:100%;height:auto}.layout{display:block}
+ .content{margin-left:0;width:100%}.nav{grid-template-columns:repeat(3,1fr)}
+ .sidebar-bottom{display:none}.grid-stats{grid-template-columns:1fr 1fr}main{padding:18px}
+}
+</style>
 </head>
 <body>
-
-<header>
-  <span class="logo">📊</span>
-  <h1>Mercado de Predicciones — Panel de gestión</h1>
-  <span id="hora-actual"></span>
-</header>
-
-<main>
-
-  <!-- STATS -->
-  <div class="card">
-    <h2>Resumen actual</h2>
-    <div class="stats">
-      <div class="stat">
-        <div class="num" id="stat-total">—</div>
-        <div class="etiq">Votos totales</div>
-      </div>
-      <div class="stat">
-        <div class="num" id="stat-si">—</div>
-        <div class="etiq">Respuestas SÍ</div>
-      </div>
-      <div class="stat">
-        <div class="num" id="stat-no">—</div>
-        <div class="etiq">Respuestas NO</div>
-      </div>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">ETEA Predict<small>Panel de gestión</small></div>
+    <nav class="nav">
+      <button class="active" data-page="dashboard" onclick="showPage('dashboard',this)">▦ &nbsp; Dashboard</button>
+      <button data-page="encuestas" onclick="showPage('encuestas',this)">☷ &nbsp; Encuestas</button>
+      <button data-page="nueva" onclick="showPage('nueva',this)">＋ &nbsp; Nueva encuesta</button>
+      <button data-page="participantes" onclick="showPage('participantes',this)">♙ &nbsp; Participantes</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <a class="logout" href="/ceco/logout">Cerrar sesión</a>
     </div>
-    <div class="votos-lista" id="votos-lista"></div>
-  </div>
+  </aside>
 
-  <!-- CONFIGURAR PREGUNTA -->
-  <div class="card">
-    <h2>Configurar pregunta</h2>
+  <section class="content">
+    <header class="topbar">
+      <h1 id="top-title">Dashboard</h1>
+      <div class="topbar-right" id="hora">—</div>
+    </header>
 
-    <label>Texto de la pregunta</label>
-    <textarea id="pregunta-texto" placeholder="¿Crees que subirá el PIB en 2027?"></textarea>
-
-    <label>Nombre de la plantilla en Meta</label>
-    <input type="text" id="pregunta-plantilla" placeholder="pregunta">
-    <p class="hint">Debe coincidir exactamente con el nombre aprobado en Meta for Developers.</p>
-
-    <label>Tipo de respuesta</label>
-    <div class="tipo-opciones">
-      <div class="tipo-btn activo" data-tipo="sino" onclick="selTipo('sino')">
-        <span class="icon">✅</span>SÍ / NO
-      </div>
-      <div class="tipo-btn" data-tipo="porcentaje" onclick="selTipo('porcentaje')">
-        <span class="icon">📈</span>Porcentaje
-      </div>
-      <div class="tipo-btn" data-tipo="numero" onclick="selTipo('numero')">
-        <span class="icon">🔢</span>Número
-      </div>
-    </div>
-
-    <div class="rango" id="rango">
-      <div>
-        <label>Valor mínimo</label>
-        <input type="number" id="rango-min" placeholder="0">
-      </div>
-      <div>
-        <label>Valor máximo</label>
-        <input type="number" id="rango-max" placeholder="100">
-      </div>
-    </div>
-
-    <label style="margin-top:20px">Vista previa en WhatsApp</label>
-    <div class="preview-whatsapp">
-      <div class="burbuja">
-        <p id="preview-texto">¿Crees que subirá el PIB en 2027?</p>
-        <div id="preview-botones">
-          <div class="burbuja-btn">↩ Sí</div>
-          <div class="burbuja-btn">↩ No</div>
+    <main>
+      <!-- DASHBOARD -->
+      <section class="page active" id="page-dashboard">
+        <div class="page-head">
+          <div><h2>Dashboard</h2><p>Estado actual de la plataforma.</p></div>
+          <button class="btn btn-primary" onclick="showPage('nueva')">＋ Nueva encuesta</button>
         </div>
-      </div>
-    </div>
 
-    <button onclick="guardarPregunta()">Guardar pregunta</button>
-  </div>
+        <div class="grid-stats">
+          <div class="stat-card"><div class="stat-label">Estado</div><div class="stat-value" id="dash-estado">—</div><div class="stat-sub">Encuesta actual</div></div>
+          <div class="stat-card"><div class="stat-label">Respuestas</div><div class="stat-value" id="dash-respuestas">—</div><div class="stat-sub">Recibidas</div></div>
+          <div class="stat-card"><div class="stat-label">Participación</div><div class="stat-value" id="dash-participacion">—</div><div class="stat-sub">Sobre destinatarios cargados</div></div>
+          <div class="stat-card"><div class="stat-label">Cierre</div><div class="stat-value" style="font-size:18px" id="dash-cierre">—</div><div class="stat-sub">Fecha configurada</div></div>
+        </div>
 
-  <!-- ENVIAR A LISTA -->
-  <div class="card">
-    <h2>Enviar pregunta</h2>
+        <div class="card active-survey">
+          <div class="card-head"><div class="card-title">Encuesta actual</div><div id="dash-badge"></div></div>
+          <div class="survey-question" id="dash-pregunta">No hay una encuesta configurada.</div>
+          <div class="meta-row">
+            <span id="dash-tipo">—</span><span>·</span><span id="dash-total">0 respuestas</span>
+          </div>
+          <div class="progress"><div class="progress-fill" id="dash-progress" style="width:0%"></div></div>
+          <div class="progress-label"><span id="dash-progress-left">0 respuestas</span><span id="dash-progress-pct">—</span></div>
+          <div class="actions">
+            <button class="btn btn-secondary" onclick="showPage('encuestas')">Gestionar encuesta</button>
+            <button class="btn btn-danger" id="dash-cerrar" onclick="cerrarEncuesta()">Cerrar encuesta</button>
+          </div>
+        </div>
 
-    <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
-      <div class="icon">📂</div>
-      <p>Arrastra aquí el CSV o Excel con los números<br><strong>o haz clic para seleccionar</strong></p>
-      <p style="margin-top:8px; font-size:12px; color:#bbb">El archivo debe tener una columna con los números de teléfono (con prefijo país, sin +)</p>
-    </div>
-    <input type="file" id="file-input" accept=".csv,.xlsx,.xls" onchange="procesarArchivo(this.files[0])">
+        <div class="card">
+          <div class="card-head"><div class="card-title">Resultados actuales</div><span class="muted">Actualización automática</span></div>
+          <div id="dash-resultados" class="results-grid"></div>
+        </div>
+      </section>
 
-    <div class="numeros-preview" id="numeros-preview">
-      <span class="numeros-count" id="numeros-count">0</span> números cargados
-      <span id="numeros-muestra" style="color:#aaa; font-size:12px; margin-left:8px;"></span>
-    </div>
+      <!-- ENCUESTAS -->
+      <section class="page" id="page-encuestas">
+        <div class="page-head">
+          <div><h2>Encuestas</h2><p>Gestiona la encuesta actualmente configurada.</p></div>
+          <button class="btn btn-primary" onclick="showPage('nueva')">＋ Nueva encuesta</button>
+        </div>
+        <div class="notice notice-info">
+          En esta primera versión el histórico todavía no está en base de datos. La migración a PostgreSQL será el siguiente paso.
+        </div>
+        <div class="card">
+          <div class="card-head"><div class="card-title">Encuesta actual</div><span id="enc-badge"></span></div>
+          <div class="survey-question" id="enc-pregunta">—</div>
+          <div class="meta-row"><span id="enc-tipo">—</span><span>·</span><span id="enc-cierre">Sin cierre</span></div>
+          <div class="actions">
+            <button class="btn btn-secondary" onclick="showPage('nueva')">Editar configuración</button>
+            <button class="btn btn-danger" id="enc-cerrar" onclick="cerrarEncuesta()">Cerrar encuesta</button>
+          </div>
+        </div>
+      </section>
 
-    <button id="btn-enviar" onclick="enviarPregunta()" disabled>Enviar pregunta a todos</button>
-    <button class="secundario" onclick="resetearTodo()" style="margin-top:10px">🗑 Resetear todos los votos</button>
-  </div>
+      <!-- NUEVA ENCUESTA -->
+      <section class="page" id="page-nueva">
+        <div class="page-head">
+          <div><h2>Nueva encuesta</h2><p>Configura la pregunta antes de lanzarla.</p></div>
+        </div>
 
-</main>
+        <div class="notice notice-warning">
+          Guardar configuración <strong>no lanza mensajes</strong>. Primero guarda y después utiliza el lanzamiento cuando todo esté revisado.
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom:20px">Configuración</div>
+          <div class="form-grid">
+            <div class="form-group full">
+              <label>Pregunta</label>
+              <textarea id="pregunta" placeholder="¿Crees que subirá el PIB en 2027?" oninput="actualizarPreview()"></textarea>
+            </div>
+
+            <div class="form-group full">
+              <label>Tipo de respuesta</label>
+              <div class="type-grid">
+                <button class="type-option active" data-type="sino" onclick="setTipo('sino')">✓ Sí / No</button>
+                <button class="type-option" data-type="porcentaje" onclick="setTipo('porcentaje')">↗ Porcentaje</button>
+                <button class="type-option" data-type="numero" onclick="setTipo('numero')"># Número</button>
+              </div>
+            </div>
+
+            <div class="form-group full">
+              <div class="range" id="rango">
+                <div><label>Mínimo</label><input type="number" id="min"></div>
+                <div><label>Máximo</label><input type="number" id="max"></div>
+              </div>
+            </div>
+
+            <div class="form-group full">
+              <label>Fecha y hora de cierre</label>
+              <div class="schedule-box">
+                <div class="form-grid">
+                  <div><label>Día</label><input type="date" id="cierre-fecha"></div>
+                  <div><label>Hora</label><input type="time" id="cierre-hora" value="23:59"></div>
+                </div>
+                <div class="muted" id="cierre-preview" style="margin-top:10px"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-primary" onclick="guardarEncuesta()">Guardar configuración</button>
+            <button class="btn btn-secondary" onclick="cargarConfig()">Descartar cambios</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom:15px">Vista previa de WhatsApp</div>
+          <div class="preview">
+            <div class="wa-bubble">
+              <div class="wa-name">ETEA Predict</div>
+              <div class="wa-text" id="preview-text">Tu pregunta aparecerá aquí</div>
+              <div id="preview-buttons">
+                <div class="wa-btn">Sí</div>
+                <div class="wa-btn">No</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title">Lanzar encuesta</div><span class="muted">CSV / Excel</span></div>
+          <p class="muted" style="margin-bottom:14px">Carga una lista de teléfonos con prefijo de país, sin el símbolo +.</p>
+          <input type="file" id="file-input" accept=".csv,.xlsx,.xls" onchange="procesarArchivo(this.files[0])">
+          <div id="file-info" class="notice notice-info" style="display:none;margin-top:12px"></div>
+          <div class="actions">
+            <button class="btn btn-primary" id="btn-lanzar" onclick="lanzar()" disabled>🚀 Lanzar encuesta</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PARTICIPANTES -->
+      <section class="page" id="page-participantes">
+        <div class="page-head">
+          <div><h2>Participantes</h2><p>En la primera versión se cargan por encuesta mediante CSV o Excel.</p></div>
+        </div>
+        <div class="card">
+          <div class="empty">
+            <div style="font-size:32px;margin-bottom:10px">♙</div>
+            <p>La gestión permanente de participantes se incorporará con PostgreSQL.</p>
+            <p style="margin-top:7px">Por ahora, puedes cargar los destinatarios directamente desde «Nueva encuesta».</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </section>
+</div>
 
 <div class="toast" id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
+let tipoActual="sino";
+let numerosLista=[];
 
-let tipoActual = "sino";
-let numerosLista = [];
-
-// ── Hora ──
-function actualizarHora() {
-  document.getElementById("hora-actual").textContent =
-    new Date().toLocaleTimeString("es-ES", {hour:"2-digit", minute:"2-digit"});
+function showPage(page, btn){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-"+page).classList.add("active");
+  document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
+  const target=btn || document.querySelector(`.nav button[data-page="${page}"]`);
+  if(target) target.classList.add("active");
+  const titles={dashboard:"Dashboard",encuestas:"Encuestas",nueva:"Nueva encuesta",participantes:"Participantes"};
+  document.getElementById("top-title").textContent=titles[page]||"Panel";
+  if(page==="dashboard"||page==="encuestas") cargarEstado();
 }
-actualizarHora();
-setInterval(actualizarHora, 60000);
 
-// ── Tipo de pregunta ──
-function selTipo(tipo) {
-  tipoActual = tipo;
-  document.querySelectorAll(".tipo-btn").forEach(b => b.classList.remove("activo"));
-  document.querySelector(`[data-tipo="${tipo}"]`).classList.add("activo");
-  const rango = document.getElementById("rango");
-  if (tipo === "sino") {
-    rango.classList.remove("visible");
-  } else {
-    rango.classList.add("visible");
-  }
+function setTipo(tipo){
+  tipoActual=tipo;
+  document.querySelectorAll(".type-option").forEach(b=>b.classList.toggle("active",b.dataset.type===tipo));
+  document.getElementById("rango").classList.toggle("visible",tipo!=="sino");
   actualizarPreview();
 }
 
-// ── Preview WhatsApp ──
-document.getElementById("pregunta-texto").addEventListener("input", actualizarPreview);
-
-function actualizarPreview() {
-  const texto = document.getElementById("pregunta-texto").value || "Tu pregunta aparecerá aquí";
-  document.getElementById("preview-texto").textContent = texto;
-
-  const bots = document.getElementById("preview-botones");
-  if (tipoActual === "sino") {
-    bots.innerHTML = `<div class="burbuja-btn">↩ Sí</div><div class="burbuja-btn">↩ No</div>`;
-  } else if (tipoActual === "porcentaje") {
-    bots.innerHTML = `<div style="font-size:12px;color:#aaa;padding-top:6px">Responde con un número (ej: 3.5)</div>`;
-  } else {
-    bots.innerHTML = `<div style="font-size:12px;color:#aaa;padding-top:6px">Responde con un número</div>`;
+function actualizarPreview(){
+  const texto=document.getElementById("pregunta").value.trim()||"Tu pregunta aparecerá aquí";
+  document.getElementById("preview-text").textContent=texto;
+  const buttons=document.getElementById("preview-buttons");
+  if(tipoActual==="sino"){
+    buttons.style.display="block";
+    buttons.innerHTML='<div class="wa-btn">Sí</div><div class="wa-btn">No</div>';
+  }else{
+    buttons.style.display="block";
+    buttons.innerHTML='<div class="wa-btn">Respuesta mediante texto</div>';
   }
 }
 
-// ── Cargar pregunta actual ──
-async function cargarPregunta() {
-  try {
-    const r = await fetch("/api/pregunta");
-    const p = await r.json();
-    document.getElementById("pregunta-texto").value    = p.texto || "";
-    document.getElementById("pregunta-plantilla").value = p.plantilla || "pregunta";
-    if (p.tipo) selTipo(p.tipo);
-    if (p.min !== null && p.min !== undefined) document.getElementById("rango-min").value = p.min;
-    if (p.max !== null && p.max !== undefined) document.getElementById("rango-max").value = p.max;
-    actualizarPreview();
-  } catch(e) { console.error(e); }
+function getCierre(){
+  const f=document.getElementById("cierre-fecha").value;
+  if(!f)return null;
+  return f+"T"+(document.getElementById("cierre-hora").value||"23:59");
 }
 
-// ── Guardar pregunta ──
-async function guardarPregunta() {
-  const body = {
-    texto:     document.getElementById("pregunta-texto").value.trim(),
-    plantilla: document.getElementById("pregunta-plantilla").value.trim(),
-    tipo:      tipoActual,
-    min:       tipoActual !== "sino" ? parseFloat(document.getElementById("rango-min").value) || null : null,
-    max:       tipoActual !== "sino" ? parseFloat(document.getElementById("rango-max").value) || null : null,
+function actualizarCierrePreview(){
+  const iso=getCierre();
+  const el=document.getElementById("cierre-preview");
+  if(!iso){el.textContent="Sin fecha de cierre";return}
+  const d=new Date(iso);
+  el.textContent="Cierra: "+d.toLocaleString("es-ES",{weekday:"long",day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+
+async function cargarConfig(){
+  try{
+    const r=await fetch("/api/encuesta");
+    if(!r.ok)throw new Error();
+    const e=await r.json();
+    document.getElementById("pregunta").value=e.texto||"";
+    setTipo(e.tipo||"sino");
+    document.getElementById("min").value=e.min??"";
+    document.getElementById("max").value=e.max??"";
+    if(e.cierre){
+      const d=new Date(e.cierre);
+      document.getElementById("cierre-fecha").value=d.toISOString().slice(0,10);
+      document.getElementById("cierre-hora").value=d.toTimeString().slice(0,5);
+    }
+    actualizarPreview();actualizarCierrePreview();
+  }catch(e){toast("No se pudo cargar la configuración","error")}
+}
+
+async function guardarEncuesta(){
+  const texto=document.getElementById("pregunta").value.trim();
+  if(!texto){toast("Escribe la pregunta","error");return}
+  const min=document.getElementById("min").value;
+  const max=document.getElementById("max").value;
+  if(tipoActual!=="sino" && min!=="" && max!=="" && Number(min)>Number(max)){
+    toast("El mínimo no puede ser mayor que el máximo","error");return
+  }
+  const body={
+    texto,tipo:tipoActual,
+    min:tipoActual==="sino"?null:(min===""?null:Number(min)),
+    max:tipoActual==="sino"?null:(max===""?null:Number(max)),
+    cierre:getCierre()
   };
-  if (!body.texto) { toast("Escribe el texto de la pregunta", "error"); return; }
-  if (!body.plantilla) { toast("Escribe el nombre de la plantilla", "error"); return; }
-
-  const r = await fetch("/api/pregunta", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
-  const d = await r.json();
-  if (d.ok) toast("Pregunta guardada ✓");
-  else toast("Error al guardar", "error");
+  try{
+    const r=await fetch("/api/encuesta",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error();
+    toast("Configuración guardada ✓");
+    cargarEstado();
+  }catch(e){toast("Error al guardar la configuración","error")}
 }
 
-// ── Procesar archivo CSV/Excel ──
-function procesarArchivo(file) {
-  if (!file) return;
-  const ext = file.name.split(".").pop().toLowerCase();
-
-  if (ext === "csv") {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const lineas = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      extraerNumeros(lineas);
-    };
+function procesarArchivo(file){
+  if(!file)return;
+  const ext=file.name.split(".").pop().toLowerCase();
+  if(ext==="csv"){
+    const reader=new FileReader();
+    reader.onload=e=>extraerNumeros(e.target.result.split(/\r?\n/).map(x=>x.trim()).filter(Boolean));
     reader.readAsText(file);
-  } else {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const wb   = XLSX.read(e.target.result, {type:"array"});
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1});
-      const vals = rows.flat().map(v => String(v).trim()).filter(Boolean);
-      extraerNumeros(vals);
+  }else{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const wb=XLSX.read(e.target.result,{type:"array"});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      extraerNumeros(XLSX.utils.sheet_to_json(ws,{header:1}).flat().map(v=>String(v).trim()).filter(Boolean));
     };
     reader.readAsArrayBuffer(file);
   }
 }
 
-function extraerNumeros(vals) {
-  // Filtra solo los que parecen números de teléfono (8+ dígitos)
-  numerosLista = vals
-    .map(v => v.replace(/[\s\-\+\.]/g, ""))
-    .filter(v => /^\d{8,15}$/.test(v));
+function extraerNumeros(vals){
+  numerosLista=[...new Set(vals.map(v=>v.replace(/[\s\-\+\.]/g,"")).filter(v=>/^\d{8,15}$/.test(v)))];
+  const info=document.getElementById("file-info");
+  info.style.display="block";
+  info.textContent=numerosLista.length
+    ? `✓ ${numerosLista.length} números válidos cargados. Ejemplo: ···${numerosLista[0].slice(-4)}`
+    : "No se encontraron números de teléfono válidos.";
+  document.getElementById("btn-lanzar").disabled=numerosLista.length===0;
+}
 
-  const prev = document.getElementById("numeros-preview");
-  const count = document.getElementById("numeros-count");
-  const muestra = document.getElementById("numeros-muestra");
+async function lanzar(){
+  if(!numerosLista.length){toast("Carga primero los participantes","error");return}
+  const texto=document.getElementById("pregunta").value.trim();
+  if(!texto){toast("Configura la pregunta primero","error");return}
+  if(!confirm(`¿Lanzar la encuesta a ${numerosLista.length} participantes?`))return;
 
-  prev.classList.add("visible");
-  count.textContent = numerosLista.length;
+  await guardarEncuesta();
+  const btn=document.getElementById("btn-lanzar");
+  btn.disabled=true;btn.textContent="Enviando...";
+  try{
+    const r=await fetch("/api/lanzar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({numeros:numerosLista})});
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error();
+    toast(`✓ Enviada a ${d.enviados} participantes`);
+    cargarEstado();
+    showPage("dashboard");
+  }catch(e){toast("Error durante el lanzamiento","error")}
+  finally{btn.disabled=false;btn.textContent="🚀 Lanzar encuesta"}
+}
 
-  if (numerosLista.length > 0) {
-    const ejs = numerosLista.slice(0,3).map(n => "···" + n.slice(-4)).join(", ");
-    muestra.textContent = `(ej: ${ejs}${numerosLista.length > 3 ? "..." : ""})`;
-    document.getElementById("btn-enviar").disabled = false;
-  } else {
-    muestra.textContent = "No se encontraron números válidos";
-    document.getElementById("btn-enviar").disabled = true;
+async function cerrarEncuesta(){
+  const estado=await obtenerEstado();
+  if(!estado?.activa){toast("No hay una encuesta activa","error");return}
+  if(!confirm("¿Seguro que quieres cerrar la encuesta? Los participantes ya no podrán modificar sus respuestas."))return;
+  try{
+    const r=await fetch("/api/cerrar",{method:"POST"});
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error();
+    toast("Encuesta cerrada ✓");
+    cargarEstado();
+  }catch(e){toast("No se pudo cerrar la encuesta","error")}
+}
+
+async function obtenerEstado(){
+  try{
+    const r=await fetch("/api/resultados");
+    if(!r.ok)return null;
+    return await r.json();
+  }catch(e){return null}
+}
+
+function badge(activa){
+  return activa
+    ? '<span class="badge badge-active">● Activa</span>'
+    : '<span class="badge badge-closed">● Cerrada</span>';
+}
+
+function renderResultados(d){
+  const cont=document.getElementById("dash-resultados");
+  const entradas=Object.entries(d.conteo||{}).sort((a,b)=>b[1]-a[1]);
+  if(!entradas.length){
+    cont.innerHTML='<div class="empty" style="grid-column:1/-1">Aún no hay respuestas.</div>';
+    return;
+  }
+  cont.innerHTML=entradas.map(([r,v])=>{
+    const pct=d.total?Math.round(v/d.total*100):0;
+    return `<div class="result-row">
+      <div class="result-top"><span>${escapeHtml(r)}</span><span>${pct}% · ${v}</span></div>
+      <div class="result-bar"><div class="result-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join("");
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+}
+
+async function cargarEstado(){
+  try{
+    const r=await fetch("/api/resultados");
+    if(!r.ok)throw new Error();
+    const d=await r.json();
+    const activa=!!d.activa;
+    document.getElementById("dash-estado").textContent=activa?"Activa":"Cerrada";
+    document.getElementById("dash-respuestas").textContent=d.total??0;
+    document.getElementById("dash-pregunta").textContent=d.pregunta||"No hay una encuesta configurada.";
+    document.getElementById("dash-badge").innerHTML=badge(activa);
+    document.getElementById("dash-total").textContent=`${d.total||0} respuestas`;
+    document.getElementById("dash-tipo").textContent=(d.tipo||"sino").toUpperCase();
+    document.getElementById("dash-cierre").textContent=d.cierre?new Date(d.cierre).toLocaleDateString("es-ES"):"—";
+    document.getElementById("dash-progress-left").textContent=`${d.total||0} respuestas`;
+    document.getElementById("dash-progress-pct").textContent="—";
+    document.getElementById("dash-cerrar").disabled=!activa;
+
+    document.getElementById("enc-badge").innerHTML=badge(activa);
+    document.getElementById("enc-pregunta").textContent=d.pregunta||"No hay una encuesta configurada.";
+    document.getElementById("enc-tipo").textContent=(d.tipo||"sino").toUpperCase();
+    document.getElementById("enc-cierre").textContent=d.cierre
+      ? (activa?"Cierra ":"Cerró ")+new Date(d.cierre).toLocaleString("es-ES")
+      :"Sin cierre";
+    document.getElementById("enc-cerrar").disabled=!activa;
+
+    renderResultados(d);
+  }catch(e){
+    console.error(e);
   }
 }
 
-// Drag & drop
-const dz = document.getElementById("dropzone");
-dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
-dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
-dz.addEventListener("drop", e => {
-  e.preventDefault();
-  dz.classList.remove("drag");
-  const file = e.dataTransfer.files[0];
-  if (file) procesarArchivo(file);
-});
-
-// ── Enviar pregunta ──
-async function enviarPregunta() {
-  if (!numerosLista.length) { toast("Carga un archivo primero", "error"); return; }
-  const btn = document.getElementById("btn-enviar");
-  btn.disabled = true;
-  btn.textContent = "Enviando...";
-
-  try {
-    const r = await fetch("/api/enviar", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ numeros: numerosLista })
-    });
-    const d = await r.json();
-    toast(`✓ Enviado a ${d.enviados} número${d.enviados !== 1 ? "s" : ""}`);
-    cargarVotos();
-  } catch(e) {
-    toast("Error al enviar", "error");
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Enviar pregunta a todos";
-  }
+function actualizarHora(){
+  document.getElementById("hora").textContent=new Date().toLocaleString("es-ES",{weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 }
 
-// ── Votos ──
-async function cargarVotos() {
-  try {
-    const r = await fetch("/api/votos");
-    const d = await r.json();
-    const votos = d.votos || {};
-    const lista = Object.entries(votos);
+document.getElementById("cierre-fecha").addEventListener("change",actualizarCierrePreview);
+document.getElementById("cierre-hora").addEventListener("change",actualizarCierrePreview);
 
-    document.getElementById("stat-total").textContent = lista.length;
-
-    const si  = lista.filter(([,v]) => v.respuesta === "SÍ").length;
-    const no  = lista.filter(([,v]) => v.respuesta === "NO").length;
-    document.getElementById("stat-si").textContent  = si  || "—";
-    document.getElementById("stat-no").textContent  = no  || "—";
-
-    const contenedor = document.getElementById("votos-lista");
-    if (lista.length === 0) {
-      contenedor.innerHTML = `<p style="color:#bbb;font-size:13px;padding:12px 0">Sin votos aún</p>`;
-      return;
-    }
-    contenedor.innerHTML = lista.slice(-10).reverse().map(([num, v]) => `
-      <div class="voto-item">
-        <span>···${num.slice(-4)}</span>
-        <span class="voto-resp">${v.respuesta}</span>
-        <span class="voto-hora">${v.hora}</span>
-      </div>
-    `).join("");
-  } catch(e) { console.error(e); }
-}
-
-// ── Resetear ──
-async function resetearTodo() {
-  if (!confirm("¿Seguro que quieres borrar todos los votos y estados?")) return;
-  const r = await fetch("/api/resetear", { method: "POST" });
-  const d = await r.json();
-  if (d.ok) { toast("Todo reseteado"); cargarVotos(); }
-}
-
-// ── Toast ──
-function toast(msg, tipo = "ok") {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = `toast ${tipo} visible`;
-  setTimeout(() => t.classList.remove("visible"), 3000);
-}
-
-// ── Init ──
-cargarPregunta();
-cargarVotos();
-setInterval(cargarVotos, 10000);
-
+actualizarHora();
+setInterval(actualizarHora,60000);
+cargarConfig();
+cargarEstado();
+setInterval(cargarEstado,5000);
 </script>
 </body>
 </html>
