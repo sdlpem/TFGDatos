@@ -1,31 +1,40 @@
 from flask import Flask, request, jsonify, send_from_directory, session, redirect
-import os, json, requests, hashlib
-from datetime import datetime
+import os
+import json
+import requests
+from datetime import datetime, timezone, timedelta
+
 import psycopg
 from psycopg.rows import dict_row
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "clave_secreta_cambiar")
 
-VERIFY_TOKEN  = os.environ.get("VERIFY_TOKEN", "mi_token_secreto_123")
-WA_TOKEN      = os.environ.get("WA_TOKEN", "")
-WA_PHONE_ID   = os.environ.get("WA_PHONE_ID", "")
-CECO_USER     = os.environ.get("CECO_USER", "ceco")
-CECO_PASS     = os.environ.get("CECO_PASS", "ceco1234")
-RESULTADOS_URL = os.environ.get("RESULTADOS_URL", "https://tfgdatos.onrender.com/resultados")
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "mi_token_secreto_123")
+WA_TOKEN = os.environ.get("WA_TOKEN", "")
+WA_PHONE_ID = os.environ.get("WA_PHONE_ID", "")
+CECO_USER = os.environ.get("CECO_USER", "ceco")
+CECO_PASS = os.environ.get("CECO_PASS", "ceco1234")
+RESULTADOS_URL = os.environ.get(
+    "RESULTADOS_URL",
+    "https://tfgdatos.onrender.com/resultados"
+)
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # BASE DE DATOS
-# ═══════════════════════════════════════════════════
+# ============================================================
 
 def db_conn():
+    """Abre una conexión PostgreSQL."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL no está configurada en Render")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    # No usamos row_factory aquí: algunas consultas necesitan tuplas.
+    # Las consultas que necesitan diccionarios usan cursor(row_factory=dict_row).
+    return psycopg.connect(DATABASE_URL)
 
 
 def init_db():
@@ -48,39 +57,75 @@ def init_db():
                     destinatarios INTEGER NOT NULL DEFAULT 0
                 )
             """)
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS votos (
                     id SERIAL PRIMARY KEY,
-                    encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+                    encuesta_id INTEGER NOT NULL
+                        REFERENCES encuestas(id) ON DELETE CASCADE,
                     telefono VARCHAR(30) NOT NULL,
                     respuesta TEXT NOT NULL,
                     fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(encuesta_id, telefono)
                 )
             """)
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS estados_participantes (
                     id SERIAL PRIMARY KEY,
-                    encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+                    encuesta_id INTEGER NOT NULL
+                        REFERENCES encuestas(id) ON DELETE CASCADE,
                     telefono VARCHAR(30) NOT NULL,
                     estado VARCHAR(40) NOT NULL,
                     fecha_actualizacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(encuesta_id, telefono)
                 )
             """)
+
         conn.commit()
 
 
 def _fecha_db(valor):
+    """Convierte una fecha ISO recibida del frontend a datetime."""
     if not valor:
         return None
+
     try:
-        s = str(valor)
+        s = str(valor).strip()
+
+        # JavaScript puede mandar una Z.
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+
         if len(s) == 16:
             s += ":00"
-        return datetime.fromisoformat(s)
+
+        dt = datetime.fromisoformat(s)
+
+        # Las columnas son TIMESTAMP sin zona.
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+        return dt
     except Exception:
         return None
+
+
+def _fecha_iso(valor):
+    if not valor:
+        return None
+    if isinstance(valor, datetime):
+        return valor.strftime("%Y-%m-%dT%H:%M:%S")
+    return str(valor)
+
+
+def _ahora_local():
+    """
+    Hora local usada por la aplicación.
+    TZ_OFFSET permite mantener el mismo funcionamiento que la versión anterior.
+    """
+    offset = int(os.environ.get("TZ_OFFSET", "2"))
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
 
 
 def _encuesta_dict(row):
@@ -98,12 +143,13 @@ def _encuesta_dict(row):
             "fecha_lanzamiento": None,
             "fecha_cierre_real": None,
             "destinatarios": 0,
-            "plantilla_sino": os.environ.get("PLANTILLA_SINO", "plantilla_dinamica"),
-            "plantilla_abierta": os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
+            "plantilla_sino": os.environ.get(
+                "PLANTILLA_SINO", "plantilla_dinamica"
+            ),
+            "plantilla_abierta": os.environ.get(
+                "PLANTILLA_ABIERTA", "plantilla_dinamica"
+            )
         }
-
-    def iso(v):
-        return v.strftime("%Y-%m-%dT%H:%M:%S") if v else None
 
     return {
         "id": row["id"],
@@ -111,29 +157,41 @@ def _encuesta_dict(row):
         "tipo": row["tipo"],
         "min": row["minimo"],
         "max": row["maximo"],
-        "cierre": iso(row["cierre"]),
-        "activa": row["activa"],
+        "cierre": _fecha_iso(row["cierre"]),
+        "activa": bool(row["activa"]),
         "estado": row["estado"],
-        "fecha_creacion": iso(row["fecha_creacion"]),
-        "fecha_lanzamiento": iso(row["fecha_lanzamiento"]),
-        "fecha_cierre_real": iso(row["fecha_cierre_real"]),
+        "fecha_creacion": _fecha_iso(row["fecha_creacion"]),
+        "fecha_lanzamiento": _fecha_iso(row["fecha_lanzamiento"]),
+        "fecha_cierre_real": _fecha_iso(row["fecha_cierre_real"]),
         "destinatarios": row["destinatarios"],
-        "plantilla_sino": os.environ.get("PLANTILLA_SINO", "plantilla_dinamica"),
-        "plantilla_abierta": os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
+        "plantilla_sino": os.environ.get(
+            "PLANTILLA_SINO", "plantilla_dinamica"
+        ),
+        "plantilla_abierta": os.environ.get(
+            "PLANTILLA_ABIERTA", "plantilla_dinamica"
+        )
     }
 
 
 def obtener_ultima_encuesta():
     with db_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM encuestas ORDER BY id DESC LIMIT 1")
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT *
+                FROM encuestas
+                ORDER BY id DESC
+                LIMIT 1
+            """)
             return cur.fetchone()
 
 
 def obtener_encuesta(id_encuesta):
     with db_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM encuestas WHERE id = %s", (id_encuesta,))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM encuestas WHERE id=%s",
+                (id_encuesta,)
+            )
             return cur.fetchone()
 
 
@@ -157,7 +215,9 @@ def guardar_nueva_encuesta(d):
                 _fecha_db(d.get("cierre"))
             ))
             encuesta_id = cur.fetchone()[0]
+
         conn.commit()
+
     return encuesta_id
 
 
@@ -166,7 +226,11 @@ def actualizar_encuesta(id_encuesta, d):
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE encuestas
-                SET texto=%s, tipo=%s, minimo=%s, maximo=%s, cierre=%s
+                SET texto=%s,
+                    tipo=%s,
+                    minimo=%s,
+                    maximo=%s,
+                    cierre=%s
                 WHERE id=%s
             """, (
                 d.get("texto", ""),
@@ -176,6 +240,7 @@ def actualizar_encuesta(id_encuesta, d):
                 _fecha_db(d.get("cierre")),
                 id_encuesta
             ))
+
         conn.commit()
 
 
@@ -185,29 +250,24 @@ def estado_encuesta():
     SIN_CONFIGURAR / BORRADOR / PENDIENTE / ACTIVA / CERRADA
     """
     e = cargar_encuesta()
+
     if not e.get("id") or not e.get("texto"):
         return "SIN_CONFIGURAR"
 
     if e.get("activa"):
         if e.get("cierre"):
             cierre = _fecha_db(e["cierre"])
-            if cierre:
-                from datetime import timezone, timedelta
-                offset = int(os.environ.get("TZ_OFFSET", "2"))
-                ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
-                if ahora > cierre:
-                    return "CERRADA"
+            if cierre and _ahora_local() > cierre:
+                return "CERRADA"
+
         return "ACTIVA"
 
     if e.get("estado") == "BORRADOR":
         if e.get("cierre"):
             cierre = _fecha_db(e["cierre"])
-            if cierre:
-                from datetime import timezone, timedelta
-                offset = int(os.environ.get("TZ_OFFSET", "2"))
-                ahora = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=offset)
-                if ahora <= cierre:
-                    return "PENDIENTE"
+            if cierre and _ahora_local() <= cierre:
+                return "PENDIENTE"
+
         return "BORRADOR"
 
     return e.get("estado", "BORRADOR")
@@ -217,19 +277,26 @@ def encuesta_abierta():
     return estado_encuesta() == "ACTIVA"
 
 
+# ============================================================
+# VOTOS Y ESTADOS
+# ============================================================
+
 def guardar_voto(numero, respuesta):
     e = cargar_encuesta()
+
     if not e.get("id"):
         return
 
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO votos (encuesta_id, telefono, respuesta)
+                INSERT INTO votos
+                    (encuesta_id, telefono, respuesta)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (encuesta_id, telefono)
-                DO UPDATE SET respuesta = EXCLUDED.respuesta,
-                              fecha = CURRENT_TIMESTAMP
+                DO UPDATE SET
+                    respuesta=EXCLUDED.respuesta,
+                    fecha=CURRENT_TIMESTAMP
             """, (e["id"], numero, respuesta))
 
             cur.execute("""
@@ -237,9 +304,11 @@ def guardar_voto(numero, respuesta):
                     (encuesta_id, telefono, estado)
                 VALUES (%s, %s, 'confirmado')
                 ON CONFLICT (encuesta_id, telefono)
-                DO UPDATE SET estado='confirmado',
-                              fecha_actualizacion=CURRENT_TIMESTAMP
+                DO UPDATE SET
+                    estado='confirmado',
+                    fecha_actualizacion=CURRENT_TIMESTAMP
             """, (e["id"], numero))
+
         conn.commit()
 
     print(f"✅ Voto: {numero} → {respuesta}")
@@ -247,6 +316,7 @@ def guardar_voto(numero, respuesta):
 
 def guardar_estado_participante(numero, nuevo_estado):
     e = cargar_encuesta()
+
     if not e.get("id"):
         return
 
@@ -257,14 +327,17 @@ def guardar_estado_participante(numero, nuevo_estado):
                     (encuesta_id, telefono, estado)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (encuesta_id, telefono)
-                DO UPDATE SET estado=EXCLUDED.estado,
-                              fecha_actualizacion=CURRENT_TIMESTAMP
+                DO UPDATE SET
+                    estado=EXCLUDED.estado,
+                    fecha_actualizacion=CURRENT_TIMESTAMP
             """, (e["id"], numero, nuevo_estado))
+
         conn.commit()
 
 
 def cargar_estado_participante(numero):
     e = cargar_encuesta()
+
     if not e.get("id"):
         return "esperando_respuesta"
 
@@ -273,9 +346,11 @@ def cargar_estado_participante(numero):
             cur.execute("""
                 SELECT estado
                 FROM estados_participantes
-                WHERE encuesta_id=%s AND telefono=%s
+                WHERE encuesta_id=%s
+                  AND telefono=%s
             """, (e["id"], numero))
             row = cur.fetchone()
+
     return row[0] if row else "esperando_respuesta"
 
 
@@ -297,34 +372,46 @@ def resumen_votos(id_encuesta=None):
             """, (id_encuesta,))
             rows = cur.fetchall()
 
-    conteo = {r: n for r, n in rows}
-    return {"total": sum(conteo.values()), "conteo": conteo}
+    conteo = {respuesta: cantidad for respuesta, cantidad in rows}
+
+    return {
+        "total": sum(conteo.values()),
+        "conteo": conteo
+    }
 
 
 def listar_encuestas():
     with db_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT e.*,
-                       COUNT(v.id)::INTEGER AS respuestas
+                SELECT
+                    e.*,
+                    COUNT(v.id)::INTEGER AS respuestas
                 FROM encuestas e
-                LEFT JOIN votos v ON v.encuesta_id=e.id
+                LEFT JOIN votos v
+                    ON v.encuesta_id=e.id
                 GROUP BY e.id
                 ORDER BY e.id DESC
             """)
             return cur.fetchall()
 
 
+# ============================================================
+# MIGRACIÓN ÚNICA DESDE LOS JSON ANTIGUOS
+# ============================================================
+
 def migrar_json_si_es_necesario():
     """
-    Migración única de seguridad: si existían encuesta/votos/estados en /tmp
-    y la base de datos está vacía, los copia a PostgreSQL.
+    Si la base de datos está vacía y todavía existen los JSON antiguos
+    en DATA_DIR, los copia a PostgreSQL una sola vez.
     """
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM encuestas")
-            if cur.fetchone()[0] > 0:
-                return
+            total = cur.fetchone()[0]
+
+    if total > 0:
+        return
 
     encuesta_path = os.path.join(DATA_DIR, "encuesta.json")
     votos_path = os.path.join(DATA_DIR, "votos.json")
@@ -342,26 +429,36 @@ def migrar_json_si_es_necesario():
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE encuestas
-                SET activa=%s, estado=%s, fecha_lanzamiento=%s
+                SET activa=%s,
+                    estado=%s,
+                    fecha_lanzamiento=%s,
+                    destinatarios=%s
                 WHERE id=%s
             """, (
                 bool(old_e.get("activa")),
                 "ACTIVA" if old_e.get("activa") else "BORRADOR",
                 datetime.now() if old_e.get("activa") else None,
+                int(old_e.get("destinatarios", 0) or 0),
                 encuesta_id
             ))
 
+        conn.commit()
+
+    # Migrar votos.
     try:
         with open(votos_path, encoding="utf-8") as f:
             old_votos = json.load(f)
+
         for numero, voto in old_votos.items():
             guardar_voto(numero, voto.get("respuesta", ""))
     except Exception:
         pass
 
+    # Restaurar estados.
     try:
         with open(estados_path, encoding="utf-8") as f:
             old_estados = json.load(f)
+
         for numero, estado in old_estados.items():
             guardar_estado_participante(numero, estado)
     except Exception:
@@ -370,7 +467,10 @@ def migrar_json_si_es_necesario():
     print("✅ Migración inicial de JSON → PostgreSQL completada")
 
 
-# Inicializar DB al arrancar.
+# ============================================================
+# ARRANQUE DE BASE DE DATOS
+# ============================================================
+
 try:
     init_db()
     migrar_json_si_es_necesario()
@@ -380,237 +480,477 @@ except Exception as ex:
     raise
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # WHATSAPP — ENVÍO
-# ═══════════════════════════════════════════════════
+# ============================================================
 
 def enviar_texto(numero, texto):
     if not WA_TOKEN or not WA_PHONE_ID:
-        print(f"⚠️ Sin creds: {texto}"); return
+        print(f"⚠️ Sin credenciales WhatsApp: {texto}")
+        return
+
     r = requests.post(
         f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
-        headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
-        json={"messaging_product": "whatsapp", "to": numero, "type": "text", "text": {"body": texto}}
+        headers={
+            "Authorization": f"Bearer {WA_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": numero,
+            "type": "text",
+            "text": {"body": texto}
+        }
     )
-    print(f"📤 Texto {numero}: {r.status_code}")
+
+    print(f"📤 Texto {numero}: {r.status_code} {r.text}")
+
 
 def enviar_plantilla(numero, encuesta):
     if not WA_TOKEN or not WA_PHONE_ID:
-        print("⚠️ Sin creds plantilla"); return
+        print("⚠️ Sin credenciales WhatsApp para plantilla")
+        return
 
-    tipo   = encuesta.get("tipo", "sino")
-    nombre = encuesta.get("plantilla_sino", "plantilla_dinamica") if tipo == "sino" else encuesta.get("plantilla_abierta", "plantilla_dinamica")
-    formato = "Responda con SÍ o NO" if tipo == "sino" else formato_instrucciones(encuesta)
+    tipo = encuesta.get("tipo", "sino")
+
+    if tipo == "sino":
+        nombre = encuesta.get(
+            "plantilla_sino",
+            os.environ.get("PLANTILLA_SINO", "plantilla_dinamica")
+        )
+        formato = "Responda con SÍ o NO"
+    else:
+        nombre = encuesta.get(
+            "plantilla_abierta",
+            os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
+        )
+        formato = formato_instrucciones(encuesta)
 
     if tipo == "sino":
         componentes = [{
             "type": "body",
             "parameters": [
-                {"type": "text", "parameter_name": "pregunta", "text": encuesta["texto"]}
+                {
+                    "type": "text",
+                    "parameter_name": "pregunta",
+                    "text": encuesta.get("texto", "")
+                }
             ]
         }]
     else:
         componentes = [{
             "type": "body",
             "parameters": [
-                {"type": "text", "parameter_name": "pregunta",          "text": encuesta["texto"]},
-                {"type": "text", "parameter_name": "formato_respuesta", "text": formato}
+                {
+                    "type": "text",
+                    "parameter_name": "pregunta",
+                    "text": encuesta.get("texto", "")
+                },
+                {
+                    "type": "text",
+                    "parameter_name": "formato_respuesta",
+                    "text": formato
+                }
             ]
         }]
 
     r = requests.post(
         f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
-        headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {WA_TOKEN}",
+            "Content-Type": "application/json"
+        },
         json={
-            "messaging_product": "whatsapp", "to": numero,
+            "messaging_product": "whatsapp",
+            "to": numero,
             "type": "template",
-            "template": {"name": nombre, "language": {"code": "es"}, "components": componentes}
+            "template": {
+                "name": nombre,
+                "language": {"code": "es"},
+                "components": componentes
+            }
         }
     )
-    print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code} {r.text}")
+
+    print(
+        f"📤 Plantilla '{nombre}' → {numero}: "
+        f"{r.status_code} {r.text}"
+    )
+
 
 def enviar_confirmacion(numero, valor):
-    """Mensaje tras votar: resultado + link de resultados"""
+    """Mensaje enviado después de registrar un voto."""
     if not WA_TOKEN or not WA_PHONE_ID:
         return
+
     texto = (
         f"✅ Tu respuesta *{valor}* ha sido registrada.\n\n"
         f"Escribe *CAMBIAR* en cualquier momento para modificarla.\n\n"
         f"📊 Ve cómo están votando los demás:\n{RESULTADOS_URL}"
     )
+
     enviar_texto(numero, texto)
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # VALIDACIÓN
-# ═══════════════════════════════════════════════════
+# ============================================================
 
 def validar(texto, encuesta):
-    t = texto.strip().upper().replace("Í","I").replace("É","E").replace("Á","A").replace("Ó","O").replace("Ú","U")
+    t = (
+        texto.strip()
+        .upper()
+        .replace("Í", "I")
+        .replace("É", "E")
+        .replace("Á", "A")
+        .replace("Ó", "O")
+        .replace("Ú", "U")
+    )
+
     tipo = encuesta.get("tipo", "sino")
+
     if tipo == "sino":
-        if t in ["SI", "S"]: return True, "SÍ"
-        if t in ["NO", "N"]: return True, "NO"
+        if t in ["SI", "S"]:
+            return True, "SÍ"
+
+        if t in ["NO", "N"]:
+            return True, "NO"
+
         return False, None
+
     if tipo == "porcentaje":
         try:
-            v = float(texto.strip().replace("%","").replace(",","."))
-            mn = encuesta.get("min") or 0
-            mx = encuesta.get("max") or 100
-            return (mn <= v <= mx, f"{v}%") if mn <= v <= mx else (False, None)
-        except: return False, None
+            v = float(
+                texto.strip()
+                .replace("%", "")
+                .replace(",", ".")
+            )
+
+            mn = encuesta.get("min")
+            mx = encuesta.get("max")
+
+            if mn is None:
+                mn = 0
+
+            if mx is None:
+                mx = 100
+
+            if mn <= v <= mx:
+                return True, f"{v}%"
+
+            return False, None
+
+        except Exception:
+            return False, None
+
     if tipo == "numero":
         try:
-            v = float(texto.strip().replace(",","."))
-            mn, mx = encuesta.get("min"), encuesta.get("max")
-            if mn is not None and v < mn: return False, None
-            if mx is not None and v > mx: return False, None
+            v = float(
+                texto.strip().replace(",", ".")
+            )
+
+            mn = encuesta.get("min")
+            mx = encuesta.get("max")
+
+            if mn is not None and v < mn:
+                return False, None
+
+            if mx is not None and v > mx:
+                return False, None
+
             return True, str(v)
-        except: return False, None
+
+        except Exception:
+            return False, None
+
     return False, None
+
 
 def formato_instrucciones(encuesta):
     tipo = encuesta.get("tipo")
+
     if tipo == "porcentaje":
         mn = encuesta.get("min", 0)
         mx = encuesta.get("max", 100)
-        return f"con un porcentaje entre {mn}% y {mx}% (ejemplo: 3.5)"
+
+        return (
+            f"con un porcentaje entre {mn}% y {mx}% "
+            f"(ejemplo: 3.5)"
+        )
+
     if tipo == "numero":
-        mn, mx = encuesta.get("min"), encuesta.get("max")
+        mn = encuesta.get("min")
+        mx = encuesta.get("max")
+
         if mn is not None and mx is not None:
             return f"con un número entre {mn} y {mx}"
+
         return "con un número"
+
     return ""
 
 
-# ═══════════════════════════════════════════════════
-# CONVERSACIÓN
-# ═══════════════════════════════════════════════════
+# ============================================================
+# CONVERSACIÓN WHATSAPP
+# ============================================================
 
 def procesar(numero, texto=None, button_id=None):
-    estado   = cargar_estado_participante(numero)
+    estado = cargar_estado_participante(numero)
     encuesta = cargar_encuesta()
 
-    print(f"📊 {numero} | estado: {estado} | texto: {texto} | btn: {button_id}")
+    print(
+        f"📊 {numero} | estado: {estado} | "
+        f"texto: {texto} | btn: {button_id}"
+    )
 
-    # Botones de cambiar respuesta (interactive)
+    # --------------------------------------------------------
+    # Botón CAMBIAR -> SÍ
+    # --------------------------------------------------------
     if button_id == "cambiar_si":
         if not encuesta_abierta():
-            enviar_texto(numero, "⏰ La encuesta ya está cerrada. No es posible cambiar la respuesta.")
+            enviar_texto(
+                numero,
+                "⏰ La encuesta ya está cerrada. "
+                "No es posible cambiar la respuesta."
+            )
             return
-        guardar_estado_participante(numero, "esperando_cambio")
+
+        guardar_estado_participante(
+            numero,
+            "esperando_cambio"
+        )
+
         enviar_plantilla(numero, encuesta)
         return
 
+    # --------------------------------------------------------
+    # Botón CAMBIAR -> NO
+    # --------------------------------------------------------
     if button_id == "cambiar_no":
-        enviar_texto(numero, "👍 Tu voto se mantiene. ¡Gracias por participar!")
+        enviar_texto(
+            numero,
+            "👍 Tu voto se mantiene. ¡Gracias por participar!"
+        )
         return
 
-    # Botón de plantilla Sí/No (llega como button_id con el título)
+    # --------------------------------------------------------
+    # Botones SÍ / NO de la plantilla
+    # --------------------------------------------------------
     if button_id is not None:
-        t = button_id.strip().upper().replace("Í","I")
+        t = (
+            button_id
+            .strip()
+            .upper()
+            .replace("Í", "I")
+        )
+
         es_si = t in ["SI", "S"]
         es_no = t in ["NO", "N"]
-        if (es_si or es_no) and estado in ["esperando_respuesta", "esperando_cambio"]:
+
+        if (
+            (es_si or es_no)
+            and estado in [
+                "esperando_respuesta",
+                "esperando_cambio"
+            ]
+        ):
             if not encuesta_abierta():
-                enviar_texto(numero, "⏰ La encuesta ya está cerrada.")
+                enviar_texto(
+                    numero,
+                    "⏰ La encuesta ya está cerrada."
+                )
                 return
+
             valor = "SÍ" if es_si else "NO"
+
             guardar_voto(numero, valor)
-            guardar_estado_participante(numero, "confirmado")
+            guardar_estado_participante(
+                numero,
+                "confirmado"
+            )
             enviar_confirmacion(numero, valor)
             return
 
     if texto is None:
         return
 
-    # Texto libre
+    # --------------------------------------------------------
+    # Primera respuesta por texto
+    # --------------------------------------------------------
     if estado == "esperando_respuesta":
         if not encuesta_abierta():
-            enviar_texto(numero, "⏰ La encuesta ya está cerrada.")
+            enviar_texto(
+                numero,
+                "⏰ La encuesta ya está cerrada."
+            )
             return
+
         ok, valor = validar(texto, encuesta)
+
         if not ok:
-            enviar_texto(numero, f"❌ Respuesta no válida.\n\n{encuesta['texto']}\n\nResponde {formato_instrucciones(encuesta) or 'con SÍ o NO'}")
+            enviar_texto(
+                numero,
+                f"❌ Respuesta no válida.\n\n"
+                f"{encuesta['texto']}\n\n"
+                f"Responde "
+                f"{formato_instrucciones(encuesta) or 'con SÍ o NO'}"
+            )
             return
+
         guardar_voto(numero, valor)
-        estados[numero] = "confirmado"
-        guardar_json("estados.json", estados)
+        guardar_estado_participante(
+            numero,
+            "confirmado"
+        )
         enviar_confirmacion(numero, valor)
 
+    # --------------------------------------------------------
+    # Usuario que ya votó
+    # --------------------------------------------------------
     elif estado == "confirmado":
         if texto.strip().upper() == "CAMBIAR":
             if not encuesta_abierta():
-                enviar_texto(numero, "⏰ La encuesta ya está cerrada. No puedes cambiar tu respuesta.")
+                enviar_texto(
+                    numero,
+                    "⏰ La encuesta ya está cerrada. "
+                    "No puedes cambiar tu respuesta."
+                )
                 return
-            estados[numero] = "esperando_cambio"
-            guardar_json("estados.json", estados)
-            enviar_plantilla(numero, encuesta)
-        else:
-            enviar_texto(numero, f"Tu voto ya está registrado. Escribe *CAMBIAR* para modificarlo.\n\n📊 {RESULTADOS_URL}")
 
+            guardar_estado_participante(
+                numero,
+                "esperando_cambio"
+            )
+
+            enviar_plantilla(numero, encuesta)
+
+        else:
+            enviar_texto(
+                numero,
+                "Tu voto ya está registrado. "
+                "Escribe *CAMBIAR* para modificarlo.\n\n"
+                f"📊 {RESULTADOS_URL}"
+            )
+
+    # --------------------------------------------------------
+    # Nueva respuesta después de CAMBIAR
+    # --------------------------------------------------------
     elif estado == "esperando_cambio":
         if not encuesta_abierta():
-            enviar_texto(numero, "⏰ La encuesta ya está cerrada.")
+            enviar_texto(
+                numero,
+                "⏰ La encuesta ya está cerrada."
+            )
             return
+
         ok, valor = validar(texto, encuesta)
+
         if not ok:
-            enviar_texto(numero, f"❌ Respuesta no válida. Responde {formato_instrucciones(encuesta) or 'con SÍ o NO'}")
+            enviar_texto(
+                numero,
+                "❌ Respuesta no válida. "
+                f"Responde "
+                f"{formato_instrucciones(encuesta) or 'con SÍ o NO'}"
+            )
             return
+
         guardar_voto(numero, valor)
-        estados[numero] = "confirmado"
-        guardar_json("estados.json", estados)
+        guardar_estado_participante(
+            numero,
+            "confirmado"
+        )
         enviar_confirmacion(numero, valor)
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # WEBHOOK
-# ═══════════════════════════════════════════════════
+# ============================================================
 
-@app.route("/webhook", methods=["GET","POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args.get("hub.challenge"), 200
+
         return "Token inválido", 403
 
-    data = request.json
-    print(f"\n📩 {json.dumps(data, indent=2)}")
+    data = request.json or {}
+
+    print(
+        f"\n📩 {json.dumps(data, indent=2, ensure_ascii=False)}"
+    )
+
     try:
         value = data["entry"][0]["changes"][0]["value"]
-        if "messages" in value:
-            msg    = value["messages"][0]
-            numero = msg["from"]
-            tipo   = msg["type"]
-            if tipo == "text":
-                procesar(numero, texto=msg["text"]["body"])
-            elif tipo == "button":
-                procesar(numero, button_id=msg["button"].get("text",""))
-            elif tipo == "interactive":
-                inter = msg["interactive"]
-                if "button_reply" in inter:
-                    procesar(numero, button_id=inter["button_reply"].get("id",""))
+
+        if "messages" not in value:
+            return "OK", 200
+
+        msg = value["messages"][0]
+        numero = msg["from"]
+        tipo = msg["type"]
+
+        if tipo == "text":
+            procesar(
+                numero,
+                texto=msg["text"]["body"]
+            )
+
+        elif tipo == "button":
+            procesar(
+                numero,
+                button_id=msg["button"].get("text", "")
+            )
+
+        elif tipo == "interactive":
+            inter = msg["interactive"]
+
+            if "button_reply" in inter:
+                procesar(
+                    numero,
+                    button_id=inter["button_reply"].get(
+                        "id", ""
+                    )
+                )
+
     except Exception as e:
-        print(f"⚠️ Error: {e}")
+        print(f"⚠️ Error procesando webhook: {e}")
+
     return "OK", 200
 
 
-# ═══════════════════════════════════════════════════
-# AUTH CECO
-# ═══════════════════════════════════════════════════
+# ============================================================
+# AUTENTICACIÓN / ADMIN
+# ============================================================
 
 def autenticado():
-    return session.get("admin") == True or session.get("ceco") == True
+    return (
+        session.get("admin") is True
+        or session.get("ceco") is True
+    )
 
-@app.route("/admin/login", methods=["GET","POST"])
+
+@app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
         data = request.json or {}
-        if data.get("user") == CECO_USER and data.get("password") == CECO_PASS:
+
+        if (
+            data.get("user") == CECO_USER
+            and data.get("password") == CECO_PASS
+        ):
             session["admin"] = True
             return jsonify({"ok": True})
-        return jsonify({"ok": False, "error": "Credenciales incorrectas"}), 401
-    return send_from_directory("static", "login.html")
+
+        return jsonify({
+            "ok": False,
+            "error": "Credenciales incorrectas"
+        }), 401
+
+    return send_from_directory(
+        "static",
+        "login.html"
+    )
 
 
 @app.route("/admin/logout")
@@ -623,21 +963,32 @@ def admin_logout():
 def admin():
     if not autenticado():
         return redirect("/admin/login")
-    return send_from_directory("static", "admin.html")
+
+    return send_from_directory(
+        "static",
+        "admin.html"
+    )
 
 
-# ───────────────────────────────────────────────────────────
-# Compatibilidad temporal con las rutas antiguas /ceco
-# ───────────────────────────────────────────────────────────
+# Compatibilidad temporal con las rutas antiguas /ceco.
 
-@app.route("/ceco/login", methods=["GET","POST"])
+@app.route("/ceco/login", methods=["GET", "POST"])
 def ceco_login_legacy():
     if request.method == "POST":
         data = request.json or {}
-        if data.get("user") == CECO_USER and data.get("password") == CECO_PASS:
+
+        if (
+            data.get("user") == CECO_USER
+            and data.get("password") == CECO_PASS
+        ):
             session["admin"] = True
             return jsonify({"ok": True})
-        return jsonify({"ok": False, "error": "Credenciales incorrectas"}), 401
+
+        return jsonify({
+            "ok": False,
+            "error": "Credenciales incorrectas"
+        }), 401
+
     return redirect("/admin/login")
 
 
@@ -650,19 +1001,24 @@ def ceco_logout_legacy():
 def ceco_legacy():
     return redirect("/admin")
 
+
 @app.route("/resultados")
 def resultados():
-    return send_from_directory("static", "resultados.html")
+    return send_from_directory(
+        "static",
+        "resultados.html"
+    )
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # API DE ADMINISTRACIÓN
-# ═══════════════════════════════════════════════════
+# ============================================================
 
 @app.route("/api/encuesta", methods=["GET"])
 def api_get_encuesta():
     if not autenticado():
         return jsonify({"error": "No autorizado"}), 401
+
     return jsonify(cargar_encuesta())
 
 
@@ -674,16 +1030,22 @@ def api_set_encuesta():
     d = request.json or {}
     actual = cargar_encuesta()
 
-    # Si no hay encuesta, crea la primera.
+    # Primera encuesta.
     if not actual.get("id"):
         encuesta_id = guardar_nueva_encuesta(d)
-    else:
-        # Si la actual está activa, no creamos una nueva accidentalmente.
-        # Para la primera versión del panel, editar mantiene la misma encuesta.
-        encuesta_id = actual["id"]
-        actualizar_encuesta(encuesta_id, d)
 
-    return jsonify({"ok": True, "id": encuesta_id})
+    # De momento, editar conserva la encuesta actual.
+    else:
+        encuesta_id = actual["id"]
+        actualizar_encuesta(
+            encuesta_id,
+            d
+        )
+
+    return jsonify({
+        "ok": True,
+        "id": encuesta_id
+    })
 
 
 @app.route("/api/lanzar", methods=["POST"])
@@ -696,17 +1058,29 @@ def api_lanzar():
     encuesta = cargar_encuesta()
 
     if not encuesta.get("id") or not encuesta.get("texto"):
-        return jsonify({"ok": False, "error": "No hay una encuesta configurada"}), 400
+        return jsonify({
+            "ok": False,
+            "error": "No hay una encuesta configurada"
+        }), 400
 
-    # Limpiar espacios, signos y duplicados.
+    # Limpiar espacios, signos + y duplicados.
     numeros_limpios = []
     vistos = set()
+
     for n in numeros:
-        n = str(n).strip().replace(" ", "").replace("+", "")
+        n = (
+            str(n)
+            .strip()
+            .replace(" ", "")
+            .replace("+", "")
+        )
+
         if n and n not in vistos:
             vistos.add(n)
             numeros_limpios.append(n)
 
+    # Activar encuesta y borrar respuestas anteriores
+    # de ESTA encuesta.
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -717,29 +1091,53 @@ def api_lanzar():
                     fecha_cierre_real=NULL,
                     destinatarios=%s
                 WHERE id=%s
-            """, (len(numeros_limpios), encuesta["id"]))
+            """, (
+                len(numeros_limpios),
+                encuesta["id"]
+            ))
 
-            # Los estados de esta encuesta se reinician al lanzarla.
             cur.execute(
-                "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                """
+                DELETE FROM estados_participantes
+                WHERE encuesta_id=%s
+                """,
                 (encuesta["id"],)
             )
+
             cur.execute(
-                "DELETE FROM votos WHERE encuesta_id=%s",
+                """
+                DELETE FROM votos
+                WHERE encuesta_id=%s
+                """,
                 (encuesta["id"],)
             )
+
         conn.commit()
 
     encuesta = cargar_encuesta()
 
-    enviados, errores = 0, []
+    enviados = 0
+    errores = []
+
     for n in numeros_limpios:
         try:
-            enviar_plantilla(n, encuesta)
-            guardar_estado_participante(n, "esperando_respuesta")
+            enviar_plantilla(
+                n,
+                encuesta
+            )
+
+            guardar_estado_participante(
+                n,
+                "esperando_respuesta"
+            )
+
             enviados += 1
+
         except Exception as e:
-            errores.append({"numero": n, "error": str(e)})
+            errores.append({
+                "numero": n,
+                "error": str(e)
+            })
 
     return jsonify({
         "ok": True,
@@ -754,8 +1152,12 @@ def api_cerrar():
         return jsonify({"error": "No autorizado"}), 401
 
     e = cargar_encuesta()
+
     if not e.get("id"):
-        return jsonify({"ok": False, "error": "No hay encuesta"}), 400
+        return jsonify({
+            "ok": False,
+            "error": "No hay encuesta"
+        }), 400
 
     with db_conn() as conn:
         with conn.cursor() as cur:
@@ -766,6 +1168,7 @@ def api_cerrar():
                     fecha_cierre_real=CURRENT_TIMESTAMP
                 WHERE id=%s
             """, (e["id"],))
+
         conn.commit()
 
     return jsonify({"ok": True})
@@ -778,45 +1181,73 @@ def api_encuestas():
 
     rows = listar_encuestas()
     salida = []
+
     for row in rows:
         item = dict(row)
-        for k in ["fecha_creacion", "fecha_lanzamiento", "fecha_cierre_real", "cierre"]:
+
+        for k in [
+            "fecha_creacion",
+            "fecha_lanzamiento",
+            "fecha_cierre_real",
+            "cierre"
+        ]:
             if item.get(k):
-                item[k] = item[k].strftime("%Y-%m-%dT%H:%M:%S")
+                item[k] = _fecha_iso(item[k])
+
         item["activa"] = bool(item["activa"])
         salida.append(item)
 
-    return jsonify({"encuestas": salida})
+    return jsonify({
+        "encuestas": salida
+    })
 
 
-# API antigua /api/votos mantenida como alias temporal.
+# ============================================================
+# API LEGACY /api/votos
+# ============================================================
+
 @app.route("/api/votos", methods=["GET"])
 def api_votos_legacy():
     if not autenticado():
         return jsonify({"error": "No autorizado"}), 401
 
     e = cargar_encuesta()
+
     if not e.get("id"):
-        return jsonify({"total": 0, "votos": {}})
+        return jsonify({
+            "total": 0,
+            "votos": {}
+        })
 
     with db_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT telefono, respuesta, fecha
                 FROM votos
                 WHERE encuesta_id=%s
                 ORDER BY fecha ASC
             """, (e["id"],))
+
             rows = cur.fetchall()
 
     votos = {
         row["telefono"]: {
             "respuesta": row["respuesta"],
-            "hora": row["fecha"].strftime("%H:%M %d/%m/%Y")
+            "hora": (
+                row["fecha"].strftime(
+                    "%H:%M %d/%m/%Y"
+                )
+                if row["fecha"]
+                else ""
+            )
         }
         for row in rows
     }
-    return jsonify({"total": len(votos), "votos": votos})
+
+    return jsonify({
+        "total": len(votos),
+        "votos": votos
+    })
 
 
 @app.route("/api/resetear", methods=["POST"])
@@ -825,14 +1256,26 @@ def api_resetear_legacy():
         return jsonify({"error": "No autorizado"}), 401
 
     e = cargar_encuesta()
+
     if e.get("id"):
         with db_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM votos WHERE encuesta_id=%s", (e["id"],))
                 cur.execute(
-                    "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                    """
+                    DELETE FROM votos
+                    WHERE encuesta_id=%s
+                    """,
                     (e["id"],)
                 )
+
+                cur.execute(
+                    """
+                    DELETE FROM estados_participantes
+                    WHERE encuesta_id=%s
+                    """,
+                    (e["id"],)
+                )
+
             conn.commit()
 
     return jsonify({"ok": True})
@@ -842,19 +1285,24 @@ def api_resetear_legacy():
 def api_pregunta_legacy():
     if not autenticado():
         return jsonify({"error": "No autorizado"}), 401
+
     e = cargar_encuesta()
+
     return jsonify({
         "texto": e.get("texto", ""),
         "tipo": e.get("tipo", "sino"),
         "min": e.get("min"),
         "max": e.get("max"),
-        "plantilla": e.get("plantilla_sino", "plantilla_dinamica")
+        "plantilla": e.get(
+            "plantilla_sino",
+            "plantilla_dinamica"
+        )
     })
 
 
-# ═══════════════════════════════════════════════════
-# API RESULTADOS (pública)
-# ═══════════════════════════════════════════════════
+# ============================================================
+# API RESULTADOS PÚBLICA
+# ============================================================
 
 @app.route("/api/resultados")
 def api_resultados():
@@ -870,14 +1318,24 @@ def api_resultados():
         "estado": estado,
         "total": res["total"],
         "conteo": res["conteo"],
-        "destinatarios": encuesta.get("destinatarios", 0)
+        "destinatarios": encuesta.get(
+            "destinatarios",
+            0
+        )
     })
 
 
-# ═══════════════════════════════════════════════════
+# ============================================================
 # INICIO
-# ═══════════════════════════════════════════════════
+# ============================================================
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(
+        os.environ.get("PORT", 5000)
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
