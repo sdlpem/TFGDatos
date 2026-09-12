@@ -329,6 +329,22 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:#72bca2;box-shado
 let tipoActual="sino";
 let numerosLista=[];
 
+
+let toastTimer;
+
+function toast(message, type="success"){
+  const el=document.getElementById("toast");
+  if(!el)return;
+  el.textContent=message;
+  el.className="toast"+(type==="error"?" error":"");
+  // Forzar la transición aunque se llame varias veces seguidas.
+  void el.offsetWidth;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove("show"),3000);
+}
+
+
 function showPage(page, btn){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+page).classList.add("active");
