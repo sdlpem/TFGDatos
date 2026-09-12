@@ -197,7 +197,7 @@ def cargar_encuesta_activa():
     return _encuesta_dict(obtener_encuesta_activa())
 
 
-def obtener_encuesta(id_encuesta):def obtener_encuesta(id_encuesta):
+def obtener_encuesta(id_encuesta):
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
