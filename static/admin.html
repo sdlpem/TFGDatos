@@ -484,10 +484,17 @@ async function obtenerEstado(){
   }catch(e){return null}
 }
 
-function badge(activa){
-  return activa
-    ? '<span class="badge badge-active">● Activa</span>'
-    : '<span class="badge badge-closed">● Cerrada</span>';
+function badge(activa, estado){
+  if(estado==="PENDIENTE"){
+    return '<span class="badge badge-closed">● Pendiente</span>';
+  }
+  if(estado==="CERRADA"){
+    return '<span class="badge badge-closed">● Cerrada</span>';
+  }
+  if(estado==="ACTIVA" || activa){
+    return '<span class="badge badge-active">● Activa</span>';
+  }
+  return '<span class="badge badge-closed">● Sin configurar</span>';
 }
 
 function renderResultados(d){
@@ -516,10 +523,19 @@ async function cargarEstado(){
     if(!r.ok)throw new Error();
     const d=await r.json();
     const activa=!!d.activa;
-    document.getElementById("dash-estado").textContent=activa?"Activa":"Cerrada";
+    const estado=d.estado||(!d.pregunta?"SIN_CONFIGURAR":(activa?"ACTIVA":"CERRADA"));
+
+    const estadoTexto={
+      "SIN_CONFIGURAR":"Sin configurar",
+      "PENDIENTE":"Pendiente de lanzamiento",
+      "ACTIVA":"Activa",
+      "CERRADA":"Cerrada"
+    }[estado]||"Sin configurar";
+
+    document.getElementById("dash-estado").textContent=estadoTexto;
     document.getElementById("dash-respuestas").textContent=d.total??0;
     document.getElementById("dash-pregunta").textContent=d.pregunta||"No hay una encuesta configurada.";
-    document.getElementById("dash-badge").innerHTML=badge(activa);
+    document.getElementById("dash-badge").innerHTML=badge(activa,estado);
     document.getElementById("dash-total").textContent=`${d.total||0} respuestas`;
     document.getElementById("dash-tipo").textContent=(d.tipo||"sino").toUpperCase();
     document.getElementById("dash-cierre").textContent=d.cierre?new Date(d.cierre).toLocaleDateString("es-ES"):"—";
@@ -527,12 +543,26 @@ async function cargarEstado(){
     document.getElementById("dash-progress-pct").textContent="—";
     document.getElementById("dash-cerrar").disabled=!activa;
 
-    document.getElementById("enc-badge").innerHTML=badge(activa);
+    document.getElementById("enc-badge").innerHTML=badge(activa,estado);
     document.getElementById("enc-pregunta").textContent=d.pregunta||"No hay una encuesta configurada.";
     document.getElementById("enc-tipo").textContent=(d.tipo||"sino").toUpperCase();
-    document.getElementById("enc-cierre").textContent=d.cierre
-      ? (activa?"Cierra ":"Cerró ")+new Date(d.cierre).toLocaleString("es-ES")
-      :"Sin cierre";
+
+    if(!d.cierre){
+      document.getElementById("enc-cierre").textContent="Sin cierre";
+    }else{
+      const fechaCierre=new Date(d.cierre);
+      const fechaTexto=fechaCierre.toLocaleString("es-ES");
+
+      if(estado==="ACTIVA"){
+        document.getElementById("enc-cierre").textContent="Cierra "+fechaTexto;
+      }else if(estado==="PENDIENTE"){
+        document.getElementById("enc-cierre").textContent="Cierre previsto: "+fechaTexto;
+      }else if(estado==="CERRADA"){
+        document.getElementById("enc-cierre").textContent="Cerró "+fechaTexto;
+      }else{
+        document.getElementById("enc-cierre").textContent="Cierre: "+fechaTexto;
+      }
+    }
     document.getElementById("enc-cerrar").disabled=!activa;
 
     renderResultados(d);
