@@ -299,28 +299,55 @@ def webhook():
 # ═══════════════════════════════════════════════════
 
 def autenticado():
-    return session.get("ceco") == True
+    return session.get("admin") == True or session.get("ceco") == True
 
-@app.route("/ceco/login", methods=["GET","POST"])
-def login():
+@app.route("/admin/login", methods=["GET","POST"])
+def admin_login():
     if request.method == "POST":
         data = request.json or {}
         if data.get("user") == CECO_USER and data.get("password") == CECO_PASS:
-            session["ceco"] = True
+            session["admin"] = True
             return jsonify({"ok": True})
         return jsonify({"ok": False, "error": "Credenciales incorrectas"}), 401
     return send_from_directory("static", "login.html")
 
-@app.route("/ceco/logout")
-def logout():
+
+@app.route("/admin/logout")
+def admin_logout():
     session.clear()
-    return redirect("/ceco/login")
+    return redirect("/admin/login")
+
+
+@app.route("/admin")
+def admin():
+    if not autenticado():
+        return redirect("/admin/login")
+    return send_from_directory("static", "admin.html")
+
+
+# ───────────────────────────────────────────────────────────
+# Compatibilidad temporal con las rutas antiguas /ceco
+# ───────────────────────────────────────────────────────────
+
+@app.route("/ceco/login", methods=["GET","POST"])
+def ceco_login_legacy():
+    if request.method == "POST":
+        data = request.json or {}
+        if data.get("user") == CECO_USER and data.get("password") == CECO_PASS:
+            session["admin"] = True
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": "Credenciales incorrectas"}), 401
+    return redirect("/admin/login")
+
+
+@app.route("/ceco/logout")
+def ceco_logout_legacy():
+    return redirect("/admin/logout")
+
 
 @app.route("/ceco")
-def ceco():
-    if not autenticado():
-        return redirect("/ceco/login")
-    return send_from_directory("static", "ceco.html")
+def ceco_legacy():
+    return redirect("/admin")
 
 @app.route("/resultados")
 def resultados():
