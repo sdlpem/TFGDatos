@@ -29,42 +29,431 @@ label{display:block;font-size:12px;font-weight:bold;margin:15px 0 7px;color:#526
 
 <section class="card"><div class="title"><div><h2>Histórico de encuestas</h2><div class="muted">Cada encuesta conserva sus propios votos y participantes.</div></div><div class="buttons"><button class="secondary" onclick="exportAll()">⬇️ Exportar todo</button><button class="secondary" onclick="loadHistory()">↻ Actualizar</button></div></div><div id="history"><div class="empty">Cargando…</div></div></section>
 </main><div id="toast" class="toast"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 let surveyId=null,activeId=null,kind="sino",numbers=[],dest=0;
 const $=x=>document.getElementById(x);
-function toast(m,e=false){const t=$("toast");t.textContent=m;t.className="toast show"+(e?" err":"");setTimeout(()=>t.className="toast",2800)}
-function setType(t){kind=t;document.querySelectorAll(".type").forEach(x=>x.classList.toggle("on",x.dataset.t===t));$("range").style.display=t==="sino"?"none":"grid"}
-function newSurvey(){surveyId=null;$("formtitle").textContent="Nueva encuesta";$("question").value="";$("min").value="";$("max").value="";$("date").value="";$("time").value="23:59";$("launchdate").value="";$("launchtime").value="10:00";setType("sino");$("badge").textContent="BORRADOR";$("badge").className="badge draft";window.scrollTo({top:0,behavior:"smooth"})}
-function fill(e){surveyId=e.id;$("formtitle").textContent="Editar encuesta #"+e.id;$("question").value=e.texto||"";setType(e.tipo||"sino");$("min").value=e.min??"";$("max").value=e.max??"";if(e.cierre){let d=new Date(e.cierre);$("date").value=d.toISOString().slice(0,10);$("time").value=d.toTimeString().slice(0,5)}else{$("date").value="";$("time").value="23:59"}if(e.fecha_programada){let d=new Date(e.fecha_programada);$("launchdate").value=d.toISOString().slice(0,10);$("launchtime").value=d.toTimeString().slice(0,5)}else{$("launchdate").value="";$("launchtime").value="10:00"}$("badge").textContent=e.activa?"ACTIVA":e.estado||"BORRADOR";$("badge").className="badge "+(e.activa?"active":e.estado==="CERRADA"?"closed":"draft")}
-async function load(){let r=await fetch("/api/encuesta"),e=await r.json();if(e.id)fill(e);else newSurvey()}
-function closure(){return $("date").value?$("date").value+"T"+($("time").value||"23:59"):null}\nfunction scheduledLaunch(){return $("launchdate").value?$("launchdate").value+"T"+($("launchtime").value||"10:00"):null}
-async function save(){let q=$("question").value.trim();if(!q)return toast("Escribe la pregunta",true);let body={modo:surveyId?"editar":"nueva",id:surveyId,texto:q,tipo:kind,min:kind==="sino"?null:($("min").value?parseFloat($("min").value):null),max:kind==="sino"?null:($("max").value?parseFloat($("max").value):null),cierre:closure(),fecha_programada:scheduledLaunch()};let r=await fetch("/api/encuesta",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}),d=await r.json();if(!r.ok||!d.ok)return toast(d.error||"Error",true);surveyId=d.id;toast(d.nueva?"Nueva encuesta creada ✓":"Guardada ✓");await load();await state();await loadHistory()}
-async function schedule(){
- if(!surveyId)return toast("Guarda primero la encuesta",true);
- if(activeId)return toast("Ya hay una encuesta activa",true);
- if(!numbers.length)return toast("Carga los teléfonos antes de programar",true);
- let launch=scheduledLaunch();
- if(!launch)return toast("Indica fecha y hora de lanzamiento",true);
- if(!confirm("¿Programar la encuesta para "+new Date(launch).toLocaleString("es-ES")+" a "+numbers.length+" participantes?"))return;
- let r=await fetch("/api/lanzar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:surveyId,numeros:numbers,programar:true,fecha_programada:launch})});
- let d=await r.json();
- if(!r.ok||!d.ok)return toast(d.error||"No se pudo programar",true);
- toast("Encuesta programada ✓");
- await state();await loadHistory();await load();
+
+function toast(m,e=false){
+  const t=$("toast");
+  t.textContent=m;
+  t.className="toast show"+(e?" err":"");
+  setTimeout(()=>t.className="toast",2800);
 }
-function exportExcel(id){window.location.href="/api/exportar/"+id}
-function exportAll(){window.location.href="/api/exportar"}
-$("file").addEventListener("change",e=>readFile(e.target.files[0]));
-function readFile(f){if(!f)return;let ext=f.name.split(".").pop().toLowerCase();if(ext==="csv"){let r=new FileReader();r.onload=e=>extract(e.target.result.split(/\r?\n/).map(x=>x.trim()).filter(Boolean));r.readAsText(f)}else{let r=new FileReader();r.onload=e=>{let wb=XLSX.read(e.target.result,{type:"array"}),ws=wb.Sheets[wb.SheetNames[0]],rows=XLSX.utils.sheet_to_json(ws,{header:1});extract(rows.flat().map(x=>String(x).trim()).filter(Boolean))};r.readAsArrayBuffer(f)}}
-function extract(v){numbers=[...new Set(v.map(x=>x.replace(/[\s\-+\.]/g,"")).filter(x=>/^\d{8,15}$/.test(x)))];dest=numbers.length;$("fileinfo").textContent=dest+" números cargados";$("launch").disabled=!dest||!surveyId||!!activeId}
-async function state(){let r=await fetch("/api/encuestas"),d=await r.json();activeId=d.activa_id;let a=d.encuestas.find(x=>x.id===activeId);if(a){$("notice").innerHTML='<div class="notice">🟢 <b>Activa #'+a.id+':</b> '+esc(a.texto)+' — ciérrala antes de lanzar otra.</div>';$("close").style.display="inline-block"}else{$("notice").innerHTML="";$("close").style.display="none"}$("launch").disabled=!numbers.length||!surveyId||!!activeId}
-async function launch(){if(activeId)return toast("Cierra primero la encuesta activa",true);if(!surveyId||!numbers.length)return toast("Guarda la encuesta y carga teléfonos",true);if(!confirm("¿Lanzar la encuesta a "+numbers.length+" participantes?"))return;let r=await fetch("/api/lanzar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:surveyId,numeros:numbers})}),d=await r.json();if(!r.ok||!d.ok)return toast(d.error||"No se pudo lanzar",true);toast("Encuesta lanzada ✓");await state();await loadHistory();await load()}
-async function closeActive(){if(!activeId)return;if(!confirm("¿Cerrar la encuesta? Los votos se conservarán en el histórico."))return;let r=await fetch("/api/cerrar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:activeId})}),d=await r.json();if(!r.ok||!d.ok)return toast(d.error||"Error",true);toast("Encuesta cerrada ✓");await state();await loadHistory();await load()}
-async function votes(){if(!surveyId)return;let r=await fetch("/api/votos?id="+surveyId),d=await r.json();$("total").textContent=d.total||0;let a=Object.entries(d.votos||{}),c={};a.forEach(([,v])=>c[v.respuesta]=(c[v.respuesta]||0)+1);let top=Object.entries(c).sort((x,y)=>y[1]-x[1])[0];$("top").textContent=top?top[0]+" ("+top[1]+")":"—";$("participation").textContent=dest?Math.round(d.total/dest*100)+"%":"—";$("votes").innerHTML=a.length?a.slice(-15).reverse().map(([n,v])=>'<div class="vote"><span>···'+esc(n.slice(-4))+'</span><b>'+esc(v.respuesta)+'</b><span>'+esc(v.hora)+'</span></div>').join(""):'<div class="empty">Sin votos</div>'}
-async function loadHistory(){let r=await fetch("/api/encuestas"),d=await r.json();$("history").innerHTML=d.encuestas.length?d.encuestas.map(e=>{let s=e.estado_calculado||e.estado,cl=s==="ACTIVA"?"active":s==="CERRADA"?"closed":s==="PROGRAMADA"?"scheduled":"draft",f=e.fecha_lanzamiento?new Date(e.fecha_lanzamiento).toLocaleString("es-ES"):"Sin lanzar";return '<div class="history"><div class="historyhead"><div><b>#'+e.id+' · '+esc(e.texto)+'</b><div class="muted">'+f+' · '+(e.respuestas||0)+' respuestas · '+(e.destinatarios||0)+' destinatarios</div></div><span class="badge '+cl+'">'+s+'</span></div><div class="actions"><button class="secondary" onclick="viewResults('+e.id+')">📊 Resultados</button><button class="secondary" onclick="edit('+e.id+')">✏️ Editar</button><button class="secondary" onclick="exportExcel('+e.id+')">⬇️ Excel</button></div></div>'}).join(""):'<div class="empty">No hay encuestas.</div>'}
-async function edit(id){let r=await fetch("/api/encuestas/"+id),e=await r.json();if(!r.ok)return toast(e.error||"No encontrada",true);fill(e);await votes();window.scrollTo({top:0,behavior:"smooth"})}
-function viewResults(id){window.open("/resultados?id="+id,"_blank")}
-function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]))}
-async function init(){await load();await state();await votes();await loadHistory();setInterval(async()=>{await state();await loadHistory();await votes()},10000)}init();
+
+function setType(t){
+  kind=t;
+  document.querySelectorAll(".type").forEach(x=>x.classList.toggle("on",x.dataset.t===t));
+  $("range").style.display=t==="sino"?"none":"grid";
+}
+
+function newSurvey(){
+  surveyId=null;
+  $("formtitle").textContent="Nueva encuesta";
+  $("question").value="";
+  $("min").value="";
+  $("max").value="";
+  $("date").value="";
+  $("time").value="23:59";
+  $("launchdate").value="";
+  $("launchtime").value="10:00";
+  setType("sino");
+  $("badge").textContent="BORRADOR";
+  $("badge").className="badge draft";
+  $("fileinfo").textContent=numbers.length+" números cargados";
+  $("launch").disabled=!numbers.length;
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function fill(e){
+  surveyId=e.id;
+  $("formtitle").textContent="Editar encuesta #"+e.id;
+  $("question").value=e.texto||"";
+  setType(e.tipo||"sino");
+  $("min").value=e.min??"";
+  $("max").value=e.max??"";
+
+  if(e.cierre){
+    let d=new Date(e.cierre);
+    $("date").value=d.toISOString().slice(0,10);
+    $("time").value=d.toTimeString().slice(0,5);
+  }else{
+    $("date").value="";
+    $("time").value="23:59";
+  }
+
+  if(e.fecha_programada){
+    let d=new Date(e.fecha_programada);
+    $("launchdate").value=d.toISOString().slice(0,10);
+    $("launchtime").value=d.toTimeString().slice(0,5);
+  }else{
+    $("launchdate").value="";
+    $("launchtime").value="10:00";
+  }
+
+  let s=e.activa?"ACTIVA":e.estado||"BORRADOR";
+  $("badge").textContent=s;
+  $("badge").className="badge "+(
+    e.activa?"active":
+    s==="CERRADA"?"closed":
+    s==="PROGRAMADA"?"scheduled":"draft"
+  );
+}
+
+async function load(){
+  let r=await fetch("/api/encuesta");
+  let e=await r.json();
+  if(e.id) fill(e);
+  else newSurvey();
+}
+
+function closure(){
+  return $("date").value
+    ? $("date").value+"T"+($("time").value||"23:59")
+    : null;
+}
+
+function scheduledLaunch(){
+  return $("launchdate").value
+    ? $("launchdate").value+"T"+($("launchtime").value||"10:00")
+    : null;
+}
+
+async function save(){
+  let q=$("question").value.trim();
+
+  if(!q){
+    toast("Escribe la pregunta",true);
+    return;
+  }
+
+  let body={
+    modo:surveyId?"editar":"nueva",
+    id:surveyId,
+    texto:q,
+    tipo:kind,
+    min:kind==="sino"?null:($("min").value?parseFloat($("min").value):null),
+    max:kind==="sino"?null:($("max").value?parseFloat($("max").value):null),
+    cierre:closure(),
+    fecha_programada:scheduledLaunch()
+  };
+
+  let r=await fetch("/api/encuesta",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+
+  let d=await r.json();
+
+  if(!r.ok||!d.ok){
+    toast(d.error||"Error",true);
+    return;
+  }
+
+  surveyId=d.id;
+  toast(d.nueva?"Nueva encuesta creada ✓":"Guardada ✓");
+  await load();
+  await state();
+  await loadHistory();
+}
+
+async function schedule(){
+  if(!surveyId){
+    toast("Guarda primero la encuesta",true);
+    return;
+  }
+
+  if(activeId){
+    toast("Ya hay una encuesta activa",true);
+    return;
+  }
+
+  if(!numbers.length){
+    toast("Carga los teléfonos antes de programar",true);
+    return;
+  }
+
+  let launch=scheduledLaunch();
+
+  if(!launch){
+    toast("Indica fecha y hora de lanzamiento",true);
+    return;
+  }
+
+  if(!confirm(
+    "¿Programar la encuesta para "+
+    new Date(launch).toLocaleString("es-ES")+
+    " a "+numbers.length+" participantes?"
+  )) return;
+
+  let r=await fetch("/api/lanzar",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      id:surveyId,
+      numeros:numbers,
+      programar:true,
+      fecha_programada:launch
+    })
+  });
+
+  let d=await r.json();
+
+  if(!r.ok||!d.ok){
+    toast(d.error||"No se pudo programar",true);
+    return;
+  }
+
+  toast("Encuesta programada ✓");
+  await state();
+  await loadHistory();
+  await load();
+}
+
+function exportExcel(id){
+  window.location.href="/api/exportar/"+id;
+}
+
+function exportAll(){
+  window.location.href="/api/exportar";
+}
+
+$("file").addEventListener("change", async function(e){
+  const f=e.target.files[0];
+  if(!f) return;
+
+  const fd=new FormData();
+  fd.append("archivo",f);
+
+  $("fileinfo").textContent="Leyendo "+f.name+"…";
+
+  try{
+    const r=await fetch("/api/subir-numeros",{
+      method:"POST",
+      body:fd
+    });
+
+    const d=await r.json();
+
+    if(!r.ok||!d.ok){
+      $("fileinfo").textContent="0 números cargados";
+      toast(d.error||"No se pudo leer el archivo",true);
+      return;
+    }
+
+    numbers=d.numeros||[];
+    dest=numbers.length;
+
+    $("fileinfo").textContent=
+      dest+" números cargados desde "+(d.archivo||f.name);
+
+    $("launch").disabled=!dest||!surveyId||!!activeId;
+
+    toast("Archivo cargado: "+dest+" números ✓");
+  }catch(err){
+    $("fileinfo").textContent="0 números cargados";
+    toast("Error subiendo el archivo",true);
+  }
+});
+
+async function state(){
+  let r=await fetch("/api/encuestas");
+  let d=await r.json();
+
+  activeId=d.activa_id;
+
+  let a=d.encuestas.find(x=>x.id===activeId);
+
+  if(a){
+    $("notice").innerHTML=
+      '<div class="notice">🟢 <b>Activa #'+a.id+
+      ':</b> '+esc(a.texto)+
+      ' — ciérrala antes de lanzar otra.</div>';
+
+    $("close").style.display="inline-block";
+  }else{
+    $("notice").innerHTML="";
+    $("close").style.display="none";
+  }
+
+  $("launch").disabled=!numbers.length||!surveyId||!!activeId;
+}
+
+async function launch(){
+  if(activeId){
+    toast("Cierra primero la encuesta activa",true);
+    return;
+  }
+
+  if(!surveyId||!numbers.length){
+    toast("Guarda la encuesta y carga teléfonos",true);
+    return;
+  }
+
+  if(!confirm("¿Lanzar la encuesta a "+numbers.length+" participantes?"))
+    return;
+
+  let r=await fetch("/api/lanzar",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      id:surveyId,
+      numeros:numbers
+    })
+  });
+
+  let d=await r.json();
+
+  if(!r.ok||!d.ok){
+    toast(d.error||"No se pudo lanzar",true);
+    return;
+  }
+
+  toast("Encuesta lanzada ✓");
+  await state();
+  await loadHistory();
+  await load();
+}
+
+async function closeActive(){
+  if(!activeId) return;
+
+  if(!confirm("¿Cerrar la encuesta? Los votos se conservarán en el histórico."))
+    return;
+
+  let r=await fetch("/api/cerrar",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({id:activeId})
+  });
+
+  let d=await r.json();
+
+  if(!r.ok||!d.ok){
+    toast(d.error||"Error",true);
+    return;
+  }
+
+  toast("Encuesta cerrada ✓");
+  await state();
+  await loadHistory();
+  await load();
+}
+
+async function votes(){
+  if(!surveyId) return;
+
+  let r=await fetch("/api/votos?id="+surveyId);
+  let d=await r.json();
+
+  $("total").textContent=d.total||0;
+
+  let a=Object.entries(d.votos||{}),c={};
+
+  a.forEach(([,v])=>{
+    c[v.respuesta]=(c[v.respuesta]||0)+1;
+  });
+
+  let top=Object.entries(c).sort((x,y)=>y[1]-x[1])[0];
+
+  $("top").textContent=
+    top?top[0]+" ("+top[1]+")":"—";
+
+  $("participation").textContent=
+    dest?Math.round(d.total/dest*100)+"%":"—";
+
+  $("votes").innerHTML=a.length
+    ?a.slice(-15).reverse().map(([n,v])=>
+      '<div class="vote"><span>···'+
+      esc(n.slice(-4))+
+      '</span><b>'+esc(v.respuesta)+
+      '</b><span>'+esc(v.hora)+
+      '</span></div>'
+    ).join("")
+    :'<div class="empty">Sin votos</div>';
+}
+
+async function loadHistory(){
+  let r=await fetch("/api/encuestas");
+  let d=await r.json();
+
+  $("history").innerHTML=d.encuestas.length
+    ?d.encuestas.map(e=>{
+      let s=e.estado_calculado||e.estado;
+      let cl=s==="ACTIVA"
+        ?"active"
+        :s==="CERRADA"
+        ?"closed"
+        :s==="PROGRAMADA"
+        ?"scheduled":"draft";
+
+      let f=e.fecha_lanzamiento
+        ?new Date(e.fecha_lanzamiento).toLocaleString("es-ES")
+        :"Sin lanzar";
+
+      return '<div class="history">'+
+        '<div class="historyhead">'+
+          '<div><b>#'+e.id+' · '+esc(e.texto)+
+          '</b><div class="muted">'+f+
+          ' · '+(e.respuestas||0)+
+          ' respuestas · '+(e.destinatarios||0)+
+          ' destinatarios</div></div>'+
+          '<span class="badge '+cl+'">'+s+
+          '</span>'+
+        '</div>'+
+        '<div class="actions">'+
+          '<button class="secondary" onclick="viewResults('+e.id+')">📊 Resultados</button>'+
+          '<button class="secondary" onclick="edit('+e.id+')">✏️ Editar</button>'+
+          '<button class="secondary" onclick="exportExcel('+e.id+')">⬇️ Excel</button>'+
+        '</div>'+
+      '</div>';
+    }).join("")
+    :'<div class="empty">No hay encuestas.</div>';
+}
+
+async function edit(id){
+  let r=await fetch("/api/encuestas/"+id);
+  let e=await r.json();
+
+  if(!r.ok){
+    toast(e.error||"No encontrada",true);
+    return;
+  }
+
+  fill(e);
+  await votes();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function viewResults(id){
+  window.open("/resultados?id="+id,"_blank");
+}
+
+function esc(v){
+  return String(v??"").replace(
+    /[&<>"']/g,
+    c=>({
+      "&":"&amp;",
+      "<":"&lt;",
+      ">":"&gt;",
+      "\"":"&quot;",
+      "'":"&#039;"
+    }[c])
+  );
+}
+
+async function init(){
+  await load();
+  await state();
+  await votes();
+  await loadHistory();
+
+  setInterval(async()=>{
+    await state();
+    await loadHistory();
+    await votes();
+  },10000);
+}
+
+init();
 </script></body></html>
