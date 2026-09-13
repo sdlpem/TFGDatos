@@ -1,6 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory, session, redirect
+from flask import Flask, request, jsonify, send_from_directory, session, redirect, send_file
 import os
 import json
+import csv
+import re
 import requests
 from io import BytesIO
 from copy import copy
@@ -320,15 +322,35 @@ def encuesta_abierta():
 # DESTINATARIOS / LANZAMIENTO PROGRAMADO
 # ============================================================
 
+def normalizar_numero(n):
+    if n is None:
+        return None
+
+    s = str(n).strip()
+
+    # Excel puede convertir un teléfono numérico a "34600123456.0".
+    if re.fullmatch(r"\\d+\\.0", s):
+        s = s[:-2]
+
+    # Conservamos solo dígitos.
+    s = re.sub(r"\\D", "", s)
+
+    if 8 <= len(s) <= 15:
+        return s
+
+    return None
+
+
 def normalizar_numeros(numeros):
     salida = []
     vistos = set()
 
     for n in numeros or []:
-        n = str(n).strip().replace(" ", "").replace("+", "")
-        if n and n not in vistos:
-            vistos.add(n)
-            salida.append(n)
+        numero = normalizar_numero(n)
+
+        if numero and numero not in vistos:
+            vistos.add(numero)
+            salida.append(numero)
 
     return salida
 
@@ -421,9 +443,21 @@ def activar_encuesta(id_encuesta):
                 SET activa=TRUE,
                     estado='ACTIVA',
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
+                    fecha_programada=NULL,
                     fecha_cierre_real=NULL
                 WHERE id=%s
             """, (id_encuesta,))
+
+            # Una encuesta programada puede ser reutilizada antes de lanzarse.
+            # Al activarla empezamos una nueva edición limpia de sus respuestas.
+            cur.execute(
+                "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                (id_encuesta,)
+            )
+            cur.execute(
+                "DELETE FROM votos WHERE encuesta_id=%s",
+                (id_encuesta,)
+            )
 
         conn.commit()
 
@@ -510,11 +544,21 @@ def procesar_programaciones():
             print(f"⚠️ Errores de envío: {errores}")
 
 
+_scheduler_iniciado = False
+
+
 def iniciar_scheduler():
     """
     Hilo sencillo para Render/Gunicorn con WEB_CONCURRENCY=1.
-    No crea procesos adicionales.
+    Evita iniciar dos hilos si el módulo se carga más de una vez.
     """
+    global _scheduler_iniciado
+
+    if _scheduler_iniciado:
+        return
+
+    _scheduler_iniciado = True
+
     import threading
     import time
 
@@ -1318,6 +1362,90 @@ def api_set_encuesta():
     return jsonify({"ok":True,"id":encuesta_id,"nueva":False})
 
 
+
+@app.route("/api/subir-numeros", methods=["POST"])
+def api_subir_numeros():
+    """Recibe CSV/XLSX y devuelve los teléfonos detectados."""
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    archivo = request.files.get("archivo")
+
+    if not archivo or not archivo.filename:
+        return jsonify({
+            "ok": False,
+            "error": "No se ha seleccionado ningún archivo"
+        }), 400
+
+    nombre = archivo.filename.lower()
+
+    try:
+        valores = []
+
+        if nombre.endswith(".csv"):
+            contenido = archivo.read().decode("utf-8-sig", errors="replace")
+            muestra = contenido[:4096]
+
+            try:
+                dialecto = csv.Sniffer().sniff(muestra, delimiters=",;\\t")
+            except Exception:
+                dialecto = csv.excel
+
+            reader = csv.reader(contenido.splitlines(), dialect=dialecto)
+
+            for fila in reader:
+                valores.extend(fila)
+
+        elif nombre.endswith(".xlsx"):
+            from openpyxl import load_workbook
+
+            libro = load_workbook(
+                archivo,
+                read_only=True,
+                data_only=True
+            )
+            hoja = libro.active
+
+            for fila in hoja.iter_rows(values_only=True):
+                valores.extend(fila)
+
+            libro.close()
+
+        elif nombre.endswith(".xls"):
+            return jsonify({
+                "ok": False,
+                "error": "El formato .xls antiguo no está soportado. Guarda el archivo como .xlsx y vuelve a subirlo."
+            }), 400
+
+        else:
+            return jsonify({
+                "ok": False,
+                "error": "Formato no soportado. Usa CSV o XLSX."
+            }), 400
+
+        numeros = normalizar_numeros(valores)
+
+        if not numeros:
+            return jsonify({
+                "ok": False,
+                "error": "No se encontraron teléfonos válidos. Deben tener entre 8 y 15 dígitos."
+            }), 400
+
+        return jsonify({
+            "ok": True,
+            "numeros": numeros,
+            "total": len(numeros),
+            "archivo": archivo.filename
+        })
+
+    except Exception as ex:
+        print(f"⚠️ Error leyendo archivo de teléfonos: {ex}")
+        return jsonify({
+            "ok": False,
+            "error": f"No se pudo leer el archivo: {ex}"
+        }), 400
+
+
 @app.route("/api/lanzar", methods=["POST"])
 def api_lanzar():
     if not autenticado():
@@ -1720,7 +1848,7 @@ def api_exportar_excel(id_encuesta):
 
     nombre = f"encuesta_{id_encuesta}.xlsx"
 
-    return send_from_directory if False else __import__("flask").send_file(
+    return send_file(
         output,
         as_attachment=True,
         download_name=nombre,
