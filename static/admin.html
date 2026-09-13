@@ -1,459 +1,111 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mercado de Predicciones — Panel</title>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel de participación · Alumni ETEA</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#f5f7fa;color:#18212b;font-family:Arial,sans-serif}
-header{background:#14202b;color:#fff;padding:18px 28px;display:flex;gap:12px;align-items:center}header h1{font-size:19px;margin:0;flex:1}
-main{max-width:1050px;margin:25px auto;padding:0 18px}.card{background:#fff;border:1px solid #e2e7ec;border-radius:12px;padding:21px;margin-bottom:18px}
-h2{font-size:17px;margin:0}.muted{font-size:13px;color:#74818d}.title{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
-.badge{padding:5px 10px;border-radius:20px;font-size:11px;font-weight:bold}.active{background:#e5f8ef;color:#12804e}.closed{background:#eef1f3;color:#66737f}.draft{background:#fff3d8;color:#936000}.scheduled{background:#e8f0ff;color:#2864a5}
-label{display:block;font-size:12px;font-weight:bold;margin:15px 0 7px;color:#52606d}textarea,input{width:100%;padding:11px;border:1px solid #d5dde4;border-radius:8px;font:inherit}textarea{min-height:85px}.row{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.types{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.type{padding:11px;border:1px solid #d5dde4;border-radius:8px;text-align:center;cursor:pointer}.type.on{border-color:#138a63;background:#effaf5;color:#08704e;font-weight:bold}#range{display:none}.buttons{display:flex;gap:9px;margin-top:17px;flex-wrap:wrap}button{border:0;border-radius:8px;padding:11px 15px;font-weight:bold;cursor:pointer}.primary{background:#138a63;color:#fff}.secondary{background:#e8edf1;color:#34414d}.danger{background:#e34e5b;color:#fff}button:disabled{opacity:.45;cursor:not-allowed}.drop{border:2px dashed #cbd5dc;border-radius:9px;padding:20px;text-align:center;color:#70808c;cursor:pointer;margin-top:15px}#file{display:none}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:15px}.stat{text-align:center;background:#f7f9fb;border-radius:9px;padding:14px}.num{font-size:27px;font-weight:800}.lbl{font-size:11px;color:#7b8790;text-transform:uppercase}
-.history{border:1px solid #e0e6eb;border-radius:9px;padding:14px;margin-top:10px}.historyhead{display:flex;justify-content:space-between;gap:12px}.actions{display:flex;gap:7px;margin-top:10px}.actions button{font-size:12px;padding:8px 10px}.vote{display:flex;justify-content:space-between;border-bottom:1px solid #edf0f2;padding:8px 2px;font-size:13px}.empty{text-align:center;color:#8a969f;padding:18px}.notice{background:#fff6dc;border:1px solid #eedb9c;border-radius:8px;padding:11px;margin-bottom:15px;font-size:13px}.toast{position:fixed;right:20px;bottom:20px;background:#18212b;color:#fff;padding:12px 16px;border-radius:8px;opacity:0;transition:.2s}.toast.show{opacity:1}.toast.err{background:#c9404e}
-@media(max-width:650px){.row,.stats,.types{grid-template-columns:1fr}.historyhead{display:block}}
-</style></head><body>
-<header><span>📊</span><h1>Mercado de Predicciones — Panel de gestión</h1><span id="clock"></span></header>
+:root{--green:#00665a;--green2:#008474;--ink:#18302f;--muted:#6f7d7b;--line:#e4ebe8;--soft:#f4f8f6;--cream:#f8f6f0;--danger:#b94242;--gold:#c7a55b}
+*{box-sizing:border-box}body{margin:0;background:#f6f8f7;color:var(--ink);font-family:Arial,Helvetica,sans-serif}
+header{background:#fff;border-bottom:1px solid var(--line);padding:0 30px;height:76px;display:flex;align-items:center;gap:18px;position:sticky;top:0;z-index:10}.brandmark{width:42px;height:42px;border:2px solid var(--green);border-radius:50%;display:grid;place-items:center;color:var(--green);font-weight:800;font-size:18px}.brand{font-size:18px;font-weight:800;letter-spacing:.2px}.subtitle{font-size:12px;color:var(--muted);margin-top:3px}.spacer{flex:1}.clock{font-size:12px;color:var(--muted)}
+main{max-width:1180px;margin:0 auto;padding:30px 22px 60px}.hero{background:var(--green);color:white;border-radius:18px;padding:28px 30px;margin-bottom:22px;display:flex;align-items:end;justify-content:space-between;gap:20px}.hero h1{margin:0 0 8px;font-size:28px}.hero p{margin:0;color:#dcebe8;max-width:700px;font-size:14px;line-height:1.5}.hero-tag{border:1px solid rgba(255,255,255,.35);border-radius:30px;padding:9px 13px;font-size:12px;white-space:nowrap}
+.grid{display:grid;grid-template-columns:1.25fr .75fr;gap:20px}.card{background:#fff;border:1px solid var(--line);border-radius:15px;padding:22px;margin-bottom:20px;box-shadow:0 3px 14px rgba(19,50,45,.035)}.card h2{margin:0;font-size:18px}.head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:18px}.muted{color:var(--muted);font-size:12px;line-height:1.45}.badge{padding:6px 10px;border-radius:20px;font-size:11px;font-weight:800}.draft{background:#fff5dc;color:#89651c}.active{background:#e4f6ef;color:#08725f}.closed{background:#edf1f0;color:#65726f}.scheduled{background:#e7f0fb;color:#2f628e}
+label{display:block;font-size:12px;font-weight:700;margin:16px 0 7px;color:#536563}textarea,input,select{width:100%;padding:11px 12px;border:1px solid #d6e0dc;border-radius:9px;background:#fff;color:var(--ink);font:inherit;outline:none}textarea{min-height:92px;resize:vertical}textarea:focus,input:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(0,102,90,.08)}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.types{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.type{border:1px solid #d7e0dd;border-radius:9px;padding:12px 8px;text-align:center;font-size:12px;cursor:pointer}.type.on{border-color:var(--green);background:#edf8f5;color:var(--green);font-weight:800}.optionsbox{display:none}.buttons{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}button{border:0;border-radius:9px;padding:11px 15px;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.primary{background:var(--green);color:#fff}.secondary{background:#edf2f0;color:#314441}.danger{background:#b94242;color:#fff}.outline{background:white;border:1px solid #cfdad6;color:var(--green)}
+.recipients{background:var(--soft);border:1px solid #e0ebe7;border-radius:11px;padding:14px;margin-top:15px}.recipient-options{display:flex;gap:8px;flex-wrap:wrap}.recipient-option{border:1px solid #d3dfdb;background:white;border-radius:9px;padding:10px 12px;cursor:pointer;font-size:12px}.recipient-option.on{border-color:var(--green);background:#eaf7f3;color:var(--green);font-weight:800}.custom{display:none;margin-top:12px;max-height:250px;overflow:auto;border:1px solid var(--line);border-radius:9px;background:white}.person{display:flex;align-items:center;gap:9px;padding:9px 11px;border-bottom:1px solid #edf1ef;font-size:12px}.person:last-child{border-bottom:0}.person input{width:auto}.person small{color:var(--muted);margin-left:auto}.search{margin:10px}.search input{padding:9px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat{background:var(--soft);border-radius:10px;padding:15px}.num{font-size:25px;font-weight:800}.lbl{font-size:10px;text-transform:uppercase;color:var(--muted);margin-top:3px}.notice{background:#f0f7f5;border-left:4px solid var(--green);border-radius:8px;padding:11px 13px;margin-bottom:18px;font-size:12px}.drop{border:2px dashed #cad8d4;border-radius:10px;padding:18px;text-align:center;color:var(--muted);cursor:pointer}.drop:hover{background:var(--soft)}#participantFile{display:none}.participant-add{display:grid;grid-template-columns:1fr auto;gap:8px}.table{margin-top:15px;border:1px solid var(--line);border-radius:10px;overflow:hidden}.tablehead,.tablerow{display:grid;grid-template-columns:1.4fr .8fr .7fr;padding:10px 12px;gap:10px;font-size:12px}.tablehead{background:var(--soft);font-weight:800;color:#536563}.tablerow{border-top:1px solid #edf1ef}.history{border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:10px}.historyhead{display:flex;justify-content:space-between;gap:12px}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}.actions button{font-size:11px;padding:8px 10px}.empty{text-align:center;color:#8a9692;padding:20px}.toast{position:fixed;right:22px;bottom:22px;background:#18302f;color:#fff;padding:12px 16px;border-radius:9px;opacity:0;transform:translateY(8px);transition:.2s;z-index:50;font-size:13px}.toast.show{opacity:1;transform:none}.toast.err{background:#a93b3b}
+@media(max-width:850px){.grid{grid-template-columns:1fr}.hero{display:block}.hero-tag{display:inline-block;margin-top:15px}.types{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){header{padding:0 16px}.clock{display:none}main{padding:20px 13px 40px}.row,.stats{grid-template-columns:1fr}.types{grid-template-columns:1fr 1fr}.tablehead,.tablerow{grid-template-columns:1fr .7fr}.tablehead div:last-child,.tablerow div:last-child{display:none}}
+</style>
+</head>
+<body>
+<header><div class="brandmark">E</div><div><div class="brand">Asociación Alumni ETEA</div><div class="subtitle">Panel de participación y encuestas</div></div><div class="spacer"></div><div class="clock" id="clock"></div></header>
 <main>
+<section class="hero"><div><h1>Panel de participación</h1><p>Gestiona participantes, crea encuestas y consulta el histórico desde un único lugar.</p></div><div class="hero-tag">Mercado de predicciones · MVP</div></section>
 <div id="notice"></div>
-<section class="card"><div class="title"><div><h2 id="formtitle">Nueva encuesta</h2><div class="muted">Crear una encuesta nueva no borra ninguna anterior.</div></div><span id="badge" class="badge draft">BORRADOR</span></div>
-<label>Pregunta</label><textarea id="question" placeholder="¿Crees que..."></textarea>
-<label>Tipo de respuesta</label><div class="types"><div class="type on" data-t="sino" onclick="setType('sino')">✅ SÍ / NO</div><div class="type" data-t="porcentaje" onclick="setType('porcentaje')">📈 Porcentaje</div><div class="type" data-t="numero" onclick="setType('numero')">🔢 Número</div></div>
-<div id="range" class="row"><div><label>Mínimo</label><input id="min" type="number" step="any"></div><div><label>Máximo</label><input id="max" type="number" step="any"></div></div>
-<div class="row"><div><label>Fecha de cierre</label><input id="date" type="date"></div><div><label>Hora de cierre</label><input id="time" type="time" value="23:59"></div></div><div class="row"><div><label>Fecha de lanzamiento programado</label><input id="launchdate" type="date"></div><div><label>Hora de lanzamiento</label><input id="launchtime" type="time" value="10:00"></div></div>
-<div class="buttons"><button class="primary" onclick="save()">💾 Guardar encuesta</button><button class="primary" onclick="schedule()">🕐 Programar lanzamiento</button><button class="secondary" onclick="newSurvey()">＋ Nueva encuesta</button></div></section>
 
-<section class="card"><div class="title"><div><h2>Lanzar encuesta</h2><div class="muted">Solo una encuesta puede estar activa simultáneamente.</div></div></div>
-<div class="drop" onclick="document.getElementById('file').click()">📂 Selecciona CSV o Excel con los teléfonos<input id="file" type="file" accept=".csv,.xlsx,.xls"></div><div class="muted" id="fileinfo">0 números cargados</div>
-<div class="buttons"><button id="launch" class="primary" onclick="launch()" disabled>🚀 Lanzar encuesta</button><button id="close" class="danger" onclick="closeActive()" style="display:none">⏹ Cerrar encuesta activa</button></div></section>
+<div class="grid">
+<div>
+<section class="card">
+  <div class="head"><div><h2 id="formtitle">Nueva encuesta</h2><div class="muted">La nueva encuesta se crea siempre en blanco.</div></div><span id="badge" class="badge draft">BORRADOR</span></div>
+  <label>Pregunta</label><textarea id="question" placeholder="¿Crees que..."></textarea>
+  <label>Tipo de respuesta</label>
+  <div class="types">
+    <div class="type on" data-t="sino" onclick="setType('sino')">SÍ / NO</div>
+    <div class="type" data-t="porcentaje" onclick="setType('porcentaje')">Porcentaje</div>
+    <div class="type" data-t="numero" onclick="setType('numero')">Número</div>
+    <div class="type" data-t="opciones" onclick="setType('opciones')">Opciones</div>
+  </div>
+  <div id="range" class="row" style="display:none"><div><label>Mínimo</label><input id="min" type="number" step="any"></div><div><label>Máximo</label><input id="max" type="number" step="any"></div></div>
+  <div id="optionsbox" class="optionsbox"><label>Opciones</label><input id="options" placeholder="A, B, C, D"><div class="muted" style="margin-top:5px">Escribe las opciones separadas por comas.</div></div>
+  <div class="row"><div><label>Fecha de cierre</label><input id="date" type="date"></div><div><label>Hora de cierre</label><input id="time" type="time" value="23:59"></div></div>
+  <div class="row"><div><label>Fecha de lanzamiento programado</label><input id="launchdate" type="date"></div><div><label>Hora de lanzamiento</label><input id="launchtime" type="time" value="10:00"></div></div>
+  <div class="buttons"><button class="primary" onclick="save()">Guardar encuesta</button><button class="secondary" onclick="newSurvey()">＋ Nueva encuesta</button></div>
+</section>
 
-<section class="card"><h2>Encuesta de trabajo</h2><div class="stats"><div class="stat"><div class="num" id="total">—</div><div class="lbl">Respuestas</div></div><div class="stat"><div class="num" id="top">—</div><div class="lbl">Respuesta principal</div></div><div class="stat"><div class="num" id="participation">—</div><div class="lbl">Participación</div></div></div><div id="votes"></div></section>
+<section class="card">
+  <div class="head"><div><h2>Lanzamiento</h2><div class="muted">Por defecto se envía a todos los participantes activos.</div></div></div>
+  <div class="recipients">
+    <div class="recipient-options">
+      <div id="allOpt" class="recipient-option on" onclick="setRecipients('all')">● Todos los participantes activos</div>
+      <div id="customOpt" class="recipient-option" onclick="setRecipients('custom')">○ Selección personalizada</div>
+    </div>
+    <div id="customBox" class="custom"><div class="search"><input id="personSearch" placeholder="Buscar por teléfono…" oninput="renderParticipantPicker()"></div><div id="picker"></div></div>
+    <div id="recipientInfo" class="muted" style="margin-top:10px">Se seleccionarán automáticamente todos los participantes ACTIVO.</div>
+  </div>
+  <div class="row" style="margin-top:15px"><div><label>Lanzamiento programado</label><div class="muted">Usa la fecha/hora de arriba para programar o lanza ahora.</div></div><div class="buttons" style="justify-content:flex-end;margin-top:0"><button id="launch" class="primary" onclick="launch(false)" disabled>🚀 Lanzar ahora</button><button id="scheduleBtn" class="outline" onclick="launch(true)" disabled>🕐 Programar</button><button id="close" class="danger" onclick="closeActive()" style="display:none">⏹ Cerrar activa</button></div></div>
+</section>
 
-<section class="card"><div class="title"><div><h2>Histórico de encuestas</h2><div class="muted">Cada encuesta conserva sus propios votos y participantes.</div></div><div class="buttons"><button class="secondary" onclick="exportAll()">⬇️ Exportar todo</button><button class="secondary" onclick="loadHistory()">↻ Actualizar</button></div></div><div id="history"><div class="empty">Cargando…</div></div></section>
+<section class="card">
+  <div class="head"><div><h2>Encuesta de trabajo</h2><div class="muted">Seguimiento de la encuesta seleccionada.</div></div></div>
+  <div class="stats"><div class="stat"><div class="num" id="total">—</div><div class="lbl">Respuestas</div></div><div class="stat"><div class="num" id="top">—</div><div class="lbl">Respuesta principal</div></div><div class="stat"><div class="num" id="participation">—</div><div class="lbl">Participación</div></div></div>
+</section>
+</div>
+
+<div>
+<section class="card">
+  <div class="head"><div><h2>Participantes</h2><div class="muted">La base de datos es la fuente central.</div></div></div>
+  <div class="stats"><div class="stat"><div class="num" id="pTotal">—</div><div class="lbl">Total</div></div><div class="stat"><div class="num" id="pActive">—</div><div class="lbl">Activos</div></div><div class="stat"><div class="num" id="pBaja">—</div><div class="lbl">Bajas</div></div></div>
+  <label>Añadir participante</label><div class="participant-add"><input id="newPhone" placeholder="34XXXXXXXXX"><button class="primary" onclick="addParticipant()">Añadir</button></div>
+  <label>Carga inicial / mantenimiento</label><div class="drop" onclick="document.getElementById('participantFile').click()">Importar CSV o Excel con teléfonos<input id="participantFile" type="file" accept=".csv,.xlsx"></div>
+  <div id="importInfo" class="muted" style="margin-top:8px">Los nuevos registros quedan en estado NUEVO hasta aceptar participar.</div>
+  <div class="table"><div class="tablehead"><div>Teléfono</div><div>Estado</div><div>Consentimiento</div></div><div id="participantRows"><div class="empty">Cargando…</div></div></div>
+</section>
+</div>
+</div>
+
+<section class="card">
+  <div class="head"><div><h2>Histórico de encuestas</h2><div class="muted">Cada encuesta conserva sus votos y destinatarios.</div></div><div class="buttons" style="margin-top:0"><button class="secondary" onclick="exportAll()">⬇️ Exportar todo</button><button class="secondary" onclick="loadHistory()">↻ Actualizar</button></div></div>
+  <div id="history"><div class="empty">Cargando…</div></div>
+</section>
 </main><div id="toast" class="toast"></div>
 <script>
-let surveyId=null,activeId=null,kind="sino",numbers=[],dest=0;
-const $=x=>document.getElementById(x);
-
-function toast(m,e=false){
-  const t=$("toast");
-  t.textContent=m;
-  t.className="toast show"+(e?" err":"");
-  setTimeout(()=>t.className="toast",2800);
-}
-
-function setType(t){
-  kind=t;
-  document.querySelectorAll(".type").forEach(x=>x.classList.toggle("on",x.dataset.t===t));
-  $("range").style.display=t==="sino"?"none":"grid";
-}
-
-function newSurvey(){
-  surveyId=null;
-  $("formtitle").textContent="Nueva encuesta";
-  $("question").value="";
-  $("min").value="";
-  $("max").value="";
-  $("date").value="";
-  $("time").value="23:59";
-  $("launchdate").value="";
-  $("launchtime").value="10:00";
-  setType("sino");
-  $("badge").textContent="BORRADOR";
-  $("badge").className="badge draft";
-  $("fileinfo").textContent=numbers.length+" números cargados";
-  $("launch").disabled=!numbers.length;
-  window.scrollTo({top:0,behavior:"smooth"});
-}
-
-function fill(e){
-  surveyId=e.id;
-  $("formtitle").textContent="Editar encuesta #"+e.id;
-  $("question").value=e.texto||"";
-  setType(e.tipo||"sino");
-  $("min").value=e.min??"";
-  $("max").value=e.max??"";
-
-  if(e.cierre){
-    let d=new Date(e.cierre);
-    $("date").value=d.toISOString().slice(0,10);
-    $("time").value=d.toTimeString().slice(0,5);
-  }else{
-    $("date").value="";
-    $("time").value="23:59";
-  }
-
-  if(e.fecha_programada){
-    let d=new Date(e.fecha_programada);
-    $("launchdate").value=d.toISOString().slice(0,10);
-    $("launchtime").value=d.toTimeString().slice(0,5);
-  }else{
-    $("launchdate").value="";
-    $("launchtime").value="10:00";
-  }
-
-  let s=e.activa?"ACTIVA":e.estado||"BORRADOR";
-  $("badge").textContent=s;
-  $("badge").className="badge "+(
-    e.activa?"active":
-    s==="CERRADA"?"closed":
-    s==="PROGRAMADA"?"scheduled":"draft"
-  );
-}
-
-async function load(){
-  let r=await fetch("/api/encuesta");
-  let e=await r.json();
-  if(e.id) fill(e);
-  else newSurvey();
-}
-
-function closure(){
-  return $("date").value
-    ? $("date").value+"T"+($("time").value||"23:59")
-    : null;
-}
-
-function scheduledLaunch(){
-  return $("launchdate").value
-    ? $("launchdate").value+"T"+($("launchtime").value||"10:00")
-    : null;
-}
-
-async function save(){
-  let q=$("question").value.trim();
-
-  if(!q){
-    toast("Escribe la pregunta",true);
-    return;
-  }
-
-  let body={
-    modo:surveyId?"editar":"nueva",
-    id:surveyId,
-    texto:q,
-    tipo:kind,
-    min:kind==="sino"?null:($("min").value?parseFloat($("min").value):null),
-    max:kind==="sino"?null:($("max").value?parseFloat($("max").value):null),
-    cierre:closure(),
-    fecha_programada:scheduledLaunch()
-  };
-
-  let r=await fetch("/api/encuesta",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body)
-  });
-
-  let d=await r.json();
-
-  if(!r.ok||!d.ok){
-    toast(d.error||"Error",true);
-    return;
-  }
-
-  surveyId=d.id;
-  toast(d.nueva?"Nueva encuesta creada ✓":"Guardada ✓");
-  await load();
-  await state();
-  await loadHistory();
-}
-
-async function schedule(){
-  if(!surveyId){
-    toast("Guarda primero la encuesta",true);
-    return;
-  }
-
-  if(activeId){
-    toast("Ya hay una encuesta activa",true);
-    return;
-  }
-
-  if(!numbers.length){
-    toast("Carga los teléfonos antes de programar",true);
-    return;
-  }
-
-  let launch=scheduledLaunch();
-
-  if(!launch){
-    toast("Indica fecha y hora de lanzamiento",true);
-    return;
-  }
-
-  if(!confirm(
-    "¿Programar la encuesta para "+
-    new Date(launch).toLocaleString("es-ES")+
-    " a "+numbers.length+" participantes?"
-  )) return;
-
-  let r=await fetch("/api/lanzar",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      id:surveyId,
-      numeros:numbers,
-      programar:true,
-      fecha_programada:launch
-    })
-  });
-
-  let d=await r.json();
-
-  if(!r.ok||!d.ok){
-    toast(d.error||"No se pudo programar",true);
-    return;
-  }
-
-  toast("Encuesta programada ✓");
-  await state();
-  await loadHistory();
-  await load();
-}
-
-function exportExcel(id){
-  window.location.href="/api/exportar/"+id;
-}
-
-function exportAll(){
-  window.location.href="/api/exportar";
-}
-
-$("file").addEventListener("change", async function(e){
-  const f=e.target.files[0];
-  if(!f) return;
-
-  const fd=new FormData();
-  fd.append("archivo",f);
-
-  $("fileinfo").textContent="Leyendo "+f.name+"…";
-
-  try{
-    const r=await fetch("/api/subir-numeros",{
-      method:"POST",
-      body:fd
-    });
-
-    const d=await r.json();
-
-    if(!r.ok||!d.ok){
-      $("fileinfo").textContent="0 números cargados";
-      toast(d.error||"No se pudo leer el archivo",true);
-      return;
-    }
-
-    numbers=d.numeros||[];
-    dest=numbers.length;
-
-    $("fileinfo").textContent=
-      dest+" números cargados desde "+(d.archivo||f.name);
-
-    $("launch").disabled=!dest||!surveyId||!!activeId;
-
-    toast("Archivo cargado: "+dest+" números ✓");
-  }catch(err){
-    $("fileinfo").textContent="0 números cargados";
-    toast("Error subiendo el archivo",true);
-  }
-});
-
-async function state(){
-  let r=await fetch("/api/encuestas");
-  let d=await r.json();
-
-  activeId=d.activa_id;
-
-  let a=d.encuestas.find(x=>x.id===activeId);
-
-  if(a){
-    $("notice").innerHTML=
-      '<div class="notice">🟢 <b>Activa #'+a.id+
-      ':</b> '+esc(a.texto)+
-      ' — ciérrala antes de lanzar otra.</div>';
-
-    $("close").style.display="inline-block";
-  }else{
-    $("notice").innerHTML="";
-    $("close").style.display="none";
-  }
-
-  $("launch").disabled=!numbers.length||!surveyId||!!activeId;
-}
-
-async function launch(){
-  if(activeId){
-    toast("Cierra primero la encuesta activa",true);
-    return;
-  }
-
-  if(!surveyId||!numbers.length){
-    toast("Guarda la encuesta y carga teléfonos",true);
-    return;
-  }
-
-  if(!confirm("¿Lanzar la encuesta a "+numbers.length+" participantes?"))
-    return;
-
-  let r=await fetch("/api/lanzar",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      id:surveyId,
-      numeros:numbers
-    })
-  });
-
-  let d=await r.json();
-
-  if(!r.ok||!d.ok){
-    toast(d.error||"No se pudo lanzar",true);
-    return;
-  }
-
-  toast("Encuesta lanzada ✓");
-  await state();
-  await loadHistory();
-  await load();
-}
-
-async function closeActive(){
-  if(!activeId) return;
-
-  if(!confirm("¿Cerrar la encuesta? Los votos se conservarán en el histórico."))
-    return;
-
-  let r=await fetch("/api/cerrar",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({id:activeId})
-  });
-
-  let d=await r.json();
-
-  if(!r.ok||!d.ok){
-    toast(d.error||"Error",true);
-    return;
-  }
-
-  toast("Encuesta cerrada ✓");
-  await state();
-  await loadHistory();
-  await load();
-}
-
-async function votes(){
-  if(!surveyId) return;
-
-  let r=await fetch("/api/votos?id="+surveyId);
-  let d=await r.json();
-
-  $("total").textContent=d.total||0;
-
-  let a=Object.entries(d.votos||{}),c={};
-
-  a.forEach(([,v])=>{
-    c[v.respuesta]=(c[v.respuesta]||0)+1;
-  });
-
-  let top=Object.entries(c).sort((x,y)=>y[1]-x[1])[0];
-
-  $("top").textContent=
-    top?top[0]+" ("+top[1]+")":"—";
-
-  $("participation").textContent=
-    dest?Math.round(d.total/dest*100)+"%":"—";
-
-  $("votes").innerHTML=a.length
-    ?a.slice(-15).reverse().map(([n,v])=>
-      '<div class="vote"><span>···'+
-      esc(n.slice(-4))+
-      '</span><b>'+esc(v.respuesta)+
-      '</b><span>'+esc(v.hora)+
-      '</span></div>'
-    ).join("")
-    :'<div class="empty">Sin votos</div>';
-}
-
-async function loadHistory(){
-  let r=await fetch("/api/encuestas");
-  let d=await r.json();
-
-  $("history").innerHTML=d.encuestas.length
-    ?d.encuestas.map(e=>{
-      let s=e.estado_calculado||e.estado;
-      let cl=s==="ACTIVA"
-        ?"active"
-        :s==="CERRADA"
-        ?"closed"
-        :s==="PROGRAMADA"
-        ?"scheduled":"draft";
-
-      let f=e.fecha_lanzamiento
-        ?new Date(e.fecha_lanzamiento).toLocaleString("es-ES")
-        :"Sin lanzar";
-
-      return '<div class="history">'+
-        '<div class="historyhead">'+
-          '<div><b>#'+e.id+' · '+esc(e.texto)+
-          '</b><div class="muted">'+f+
-          ' · '+(e.respuestas||0)+
-          ' respuestas · '+(e.destinatarios||0)+
-          ' destinatarios</div></div>'+
-          '<span class="badge '+cl+'">'+s+
-          '</span>'+
-        '</div>'+
-        '<div class="actions">'+
-          '<button class="secondary" onclick="viewResults('+e.id+')">📊 Resultados</button>'+
-          '<button class="secondary" onclick="edit('+e.id+')">✏️ Editar</button>'+
-          '<button class="secondary" onclick="exportExcel('+e.id+')">⬇️ Excel</button>'+
-        '</div>'+
-      '</div>';
-    }).join("")
-    :'<div class="empty">No hay encuestas.</div>';
-}
-
-async function edit(id){
-  let r=await fetch("/api/encuestas/"+id);
-  let e=await r.json();
-
-  if(!r.ok){
-    toast(e.error||"No encontrada",true);
-    return;
-  }
-
-  fill(e);
-  await votes();
-  window.scrollTo({top:0,behavior:"smooth"});
-}
-
-function viewResults(id){
-  window.open("/resultados?id="+id,"_blank");
-}
-
-function esc(v){
-  return String(v??"").replace(
-    /[&<>"']/g,
-    c=>({
-      "&":"&amp;",
-      "<":"&lt;",
-      ">":"&gt;",
-      "\"":"&quot;",
-      "'":"&#039;"
-    }[c])
-  );
-}
-
-async function init(){
-  await load();
-  await state();
-  await votes();
-  await loadHistory();
-
-  setInterval(async()=>{
-    await state();
-    await loadHistory();
-    await votes();
-  },10000);
-}
-
+let surveyId=null,activeId=null,kind='sino',participants=[],recipientMode='all';
+const $=id=>document.getElementById(id);
+function toast(m,e=false){const t=$('toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast',2800)}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function clock(){ $('clock').textContent=new Date().toLocaleString('es-ES',{dateStyle:'medium',timeStyle:'short'}) }
+setInterval(clock,1000);clock();
+function setType(t){kind=t;document.querySelectorAll('.type').forEach(x=>x.classList.toggle('on',x.dataset.t===t));$('range').style.display=(t==='sino'||t==='opciones')?'none':'grid';$('optionsbox').style.display=t==='opciones'?'block':'none';}
+function newSurvey(){surveyId=null;$('formtitle').textContent='Nueva encuesta';$('question').value='';$('min').value='';$('max').value='';$('options').value='';$('date').value='';$('time').value='23:59';$('launchdate').value='';$('launchtime').value='10:00';setType('sino');$('badge').textContent='BORRADOR';$('badge').className='badge draft';updateButtons();window.scrollTo({top:0,behavior:'smooth'})}
+function fill(e){surveyId=e.id;$('formtitle').textContent='Editar encuesta #'+e.id;$('question').value=e.texto||'';setType(e.tipo||'sino');$('min').value=e.min??'';$('max').value=e.max??'';$('options').value=(e.opciones||[]).join(', ');if(e.cierre){let d=new Date(e.cierre);$('date').value=d.toISOString().slice(0,10);$('time').value=d.toTimeString().slice(0,5)}else{$('date').value='';$('time').value='23:59'}if(e.fecha_programada){let d=new Date(e.fecha_programada);$('launchdate').value=d.toISOString().slice(0,10);$('launchtime').value=d.toTimeString().slice(0,5)}else{$('launchdate').value='';$('launchtime').value='10:00'}let st=e.activa?'ACTIVA':e.estado||'BORRADOR';$('badge').textContent=st;$('badge').className='badge '+(e.activa?'active':st==='CERRADA'?'closed':st==='PROGRAMADA'?'scheduled':'draft');updateButtons()}
+function closure(){return $('date').value?$('date').value+'T'+($('time').value||'23:59'):null}function scheduledLaunch(){return $('launchdate').value?$('launchdate').value+'T'+($('launchtime').value||'10:00'):null}
+async function save(){let q=$('question').value.trim();if(!q){toast('Escribe la pregunta',true);return}let opts=$('options').value.split(',').map(x=>x.trim()).filter(Boolean);if(kind==='opciones'&&(opts.length<2)){toast('Añade al menos dos opciones',true);return}let body={modo:surveyId?'editar':'nueva',id:surveyId,texto:q,tipo:kind,min:(kind==='sino'||kind==='opciones')?null:($('min').value?parseFloat($('min').value):null),max:(kind==='sino'||kind==='opciones')?null:($('max').value?parseFloat($('max').value):null),opciones:kind==='opciones'?opts:[],cierre:closure(),fecha_programada:scheduledLaunch()};let r=await fetch('/api/encuesta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=await r.json();if(!r.ok||!d.ok){toast(d.error||'Error',true);return}surveyId=d.id;toast(d.nueva?'Nueva encuesta creada ✓':'Guardada ✓');await loadSurvey(surveyId);await state();await loadHistory();}
+async function loadSurvey(id){if(!id){newSurvey();return}let r=await fetch('/api/encuestas/'+id);let e=await r.json();if(r.ok)fill(e)}
+function setRecipients(mode){recipientMode=mode;$('allOpt').classList.toggle('on',mode==='all');$('customOpt').classList.toggle('on',mode==='custom');$('customBox').style.display=mode==='custom'?'block':'none';$('recipientInfo').textContent=mode==='all'?'Se seleccionarán automáticamente todos los participantes ACTIVO.':selectedPhones().length+' participantes seleccionados.';updateButtons()}
+function selectedPhones(){return [...document.querySelectorAll('#picker input[type=checkbox]:checked')].map(x=>x.value)}
+function renderParticipantPicker(){let q=($('personSearch').value||'').toLowerCase();let arr=participants.filter(p=>p.estado==='ACTIVO'&&p.telefono.includes(q));$('picker').innerHTML=arr.length?arr.map(p=>'<label class="person"><input type="checkbox" value="'+esc(p.telefono)+'" onchange="recipientInfo()">'+esc(p.telefono)+'<small>ACTIVO</small></label>').join(''):'<div class="empty">No hay participantes activos.</div>'}
+function recipientInfo(){let n=selectedPhones().length;$('recipientInfo').textContent=recipientMode==='all'?'Se seleccionarán automáticamente todos los participantes ACTIVO.':n+' participantes seleccionados.';updateButtons()}
+async function loadParticipants(){let r=await fetch('/api/participantes');let d=await r.json();if(!r.ok){toast(d.error||'No se pudieron cargar los participantes',true);return}participants=d.participantes||[];$('pTotal').textContent=d.total;$('pActive').textContent=d.activos;$('pBaja').textContent=d.bajas;let recent=participants.slice(0,12);$('participantRows').innerHTML=recent.length?recent.map(p=>'<div class="tablerow"><div>'+esc(p.telefono)+'</div><div><span class="badge '+(p.estado==='ACTIVO'?'active':p.estado==='BAJA'?'closed':'draft')+'">'+esc(p.estado)+'</span></div><div>'+((p.consentimiento)?'Sí':'No')+'</div></div>').join(''):'<div class="empty">No hay participantes.</div>';renderParticipantPicker();updateButtons()}
+async function addParticipant(){let n=$('newPhone').value.trim();if(!n){toast('Escribe un teléfono',true);return}let r=await fetch('/api/participantes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefono:n})});let d=await r.json();if(!r.ok||!d.ok){toast(d.error||'No se pudo añadir',true);return}$('newPhone').value='';toast('Participante añadido ✓');await loadParticipants()}
+$('participantFile').addEventListener('change',async e=>{let f=e.target.files[0];if(!f)return;let fd=new FormData();fd.append('archivo',f);$('importInfo').textContent='Importando '+f.name+'…';let r=await fetch('/api/participantes/importar',{method:'POST',body:fd});let d=await r.json();if(!r.ok||!d.ok){$('importInfo').textContent=d.error||'Error';toast(d.error||'No se pudo importar',true);return}$('importInfo').textContent=d.total+' teléfonos procesados · '+d.nuevos+' nuevos registros.';toast('Participantes importados ✓');await loadParticipants()})
+function updateButtons(){let disabled=!surveyId||!!activeId|| (recipientMode==='custom'&&!selectedPhones().length);$('launch').disabled=disabled;$('scheduleBtn').disabled=disabled}
+async function launch(programar){if(!surveyId){toast('Guarda primero la encuesta',true);return}if(activeId){toast('Cierra primero la encuesta activa',true);return}let numeros=recipientMode==='custom'?selectedPhones():[];if(programar&&!scheduledLaunch()){toast('Indica fecha y hora de lanzamiento',true);return}let n=recipientMode==='custom'?numeros.length:participants.filter(p=>p.estado==='ACTIVO'&&p.consentimiento).length;if(!n){toast('No hay participantes activos con consentimiento',true);return}let msg=programar?'¿Programar la encuesta para '+new Date(scheduledLaunch()).toLocaleString('es-ES')+'?':'¿Lanzar la encuesta ahora?';if(!confirm(msg+' Destinatarios: '+n+'.'))return;let r=await fetch('/api/lanzar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:surveyId,numeros:numeros,destinatarios:recipientMode==='all'?'todos_activos':'personalizado',programar:programar,fecha_programada:scheduledLaunch()})});let d=await r.json();if(!r.ok||!d.ok){toast(d.error||'No se pudo lanzar',true);return}toast(programar?'Encuesta programada ✓':'Encuesta lanzada ✓');await state();await loadHistory();await loadSurvey(surveyId)}
+async function state(){let r=await fetch('/api/encuestas');let d=await r.json();activeId=d.activa_id;let a=d.encuestas.find(x=>x.id===activeId);$('notice').innerHTML=a?'<div class="notice">🟢 <b>Encuesta activa #'+a.id+':</b> '+esc(a.texto)+' — ciérrala antes de lanzar otra.</div>':'';$('close').style.display=a?'inline-block':'none';updateButtons()}
+async function closeActive(){if(!activeId)return;if(!confirm('¿Cerrar la encuesta? Los votos se conservarán.'))return;let r=await fetch('/api/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:activeId})});let d=await r.json();if(!r.ok||!d.ok){toast(d.error||'Error',true);return}toast('Encuesta cerrada ✓');await state();await loadHistory();await loadSurvey(surveyId)}
+async function votes(){if(!surveyId)return;let r=await fetch('/api/votos?id='+surveyId);let d=await r.json();$('total').textContent=d.total||0;let c={};Object.values(d.votos||{}).forEach(v=>c[v.respuesta]=(c[v.respuesta]||0)+1);let top=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];$('top').textContent=top?top[0]+' ('+top[1]+')':'—';let dest=recipientMode==='all'?participants.filter(p=>p.estado==='ACTIVO'&&p.consentimiento).length:selectedPhones().length;$('participation').textContent=dest?Math.round(d.total/dest*100)+'%':'—'}
+async function loadHistory(){let r=await fetch('/api/encuestas');let d=await r.json();$('history').innerHTML=d.encuestas.length?d.encuestas.map(e=>{let s=e.estado_calculado||e.estado;let cl=s==='ACTIVA'?'active':s==='CERRADA'?'closed':s==='PROGRAMADA'?'scheduled':'draft';let f=e.fecha_lanzamiento?new Date(e.fecha_lanzamiento).toLocaleString('es-ES'):'Sin lanzar';return '<div class="history"><div class="historyhead"><div><b>#'+e.id+' · '+esc(e.texto)+'</b><div class="muted">'+f+' · '+(e.respuestas||0)+' respuestas · '+(e.destinatarios||0)+' destinatarios</div></div><span class="badge '+cl+'">'+s+'</span></div><div class="actions"><button class="secondary" onclick="viewResults('+e.id+')">📊 Resultados</button><button class="secondary" onclick="edit('+e.id+')">✏️ Editar</button><button class="secondary" onclick="exportExcel('+e.id+')">⬇️ Excel</button></div></div>'}).join(''):'<div class="empty">No hay encuestas.</div>'}
+async function edit(id){let r=await fetch('/api/encuestas/'+id);let e=await r.json();if(!r.ok){toast(e.error||'No encontrada',true);return}fill(e);await votes();window.scrollTo({top:0,behavior:'smooth'})}
+function viewResults(id){window.open('/resultados?id='+id,'_blank')}function exportExcel(id){window.location.href='/api/exportar/'+id}function exportAll(){window.location.href='/api/exportar'}
+async function init(){newSurvey();await loadParticipants();await state();await loadHistory();setInterval(async()=>{await state();await loadHistory();await votes();},10000)}
 init();
-</script></body></html>
+</script>
+</body></html>
