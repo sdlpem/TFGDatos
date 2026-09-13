@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify, send_from_directory, session, redirec
 import os
 import json
 import requests
+from io import BytesIO
+from copy import copy
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from datetime import datetime, timezone, timedelta
 
 import psycopg
@@ -78,6 +82,24 @@ def init_db():
                     telefono VARCHAR(30) NOT NULL,
                     estado VARCHAR(40) NOT NULL,
                     fecha_actualizacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(encuesta_id, telefono)
+                )
+            """)
+
+            # Fecha/hora programada de lanzamiento.
+            cur.execute("""
+                ALTER TABLE encuestas
+                ADD COLUMN IF NOT EXISTS fecha_programada TIMESTAMP NULL
+            """)
+
+            # Teléfonos asociados a una encuesta, necesarios para poder
+            # lanzar automáticamente una encuesta programada.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS destinatarios_encuesta (
+                    id SERIAL PRIMARY KEY,
+                    encuesta_id INTEGER NOT NULL
+                        REFERENCES encuestas(id) ON DELETE CASCADE,
+                    telefono VARCHAR(30) NOT NULL,
                     UNIQUE(encuesta_id, telefono)
                 )
             """)
@@ -162,6 +184,7 @@ def _encuesta_dict(row):
         "estado": row["estado"],
         "fecha_creacion": _fecha_iso(row["fecha_creacion"]),
         "fecha_lanzamiento": _fecha_iso(row["fecha_lanzamiento"]),
+        "fecha_programada": _fecha_iso(row.get("fecha_programada")),
         "fecha_cierre_real": _fecha_iso(row["fecha_cierre_real"]),
         "destinatarios": row["destinatarios"],
         "plantilla_sino": os.environ.get(
@@ -216,15 +239,16 @@ def guardar_nueva_encuesta(d):
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO encuestas
-                    (texto, tipo, minimo, maximo, cierre, activa, estado)
-                VALUES (%s, %s, %s, %s, %s, FALSE, 'BORRADOR')
+                    (texto, tipo, minimo, maximo, cierre, activa, estado, fecha_programada)
+                VALUES (%s, %s, %s, %s, %s, FALSE, 'BORRADOR', %s)
                 RETURNING id
             """, (
                 d.get("texto", ""),
                 d.get("tipo", "sino"),
                 d.get("min"),
                 d.get("max"),
-                _fecha_db(d.get("cierre"))
+                _fecha_db(d.get("cierre")),
+                _fecha_db(d.get("fecha_programada"))
             ))
             encuesta_id = cur.fetchone()[0]
 
@@ -242,7 +266,8 @@ def actualizar_encuesta(id_encuesta, d):
                     tipo=%s,
                     minimo=%s,
                     maximo=%s,
-                    cierre=%s
+                    cierre=%s,
+                    fecha_programada=%s
                 WHERE id=%s
             """, (
                 d.get("texto", ""),
@@ -250,6 +275,7 @@ def actualizar_encuesta(id_encuesta, d):
                 d.get("min"),
                 d.get("max"),
                 _fecha_db(d.get("cierre")),
+                _fecha_db(d.get("fecha_programada")),
                 id_encuesta
             ))
 
@@ -287,6 +313,227 @@ def estado_encuesta():
 
 def encuesta_abierta():
     return estado_encuesta() == "ACTIVA"
+
+
+
+# ============================================================
+# DESTINATARIOS / LANZAMIENTO PROGRAMADO
+# ============================================================
+
+def normalizar_numeros(numeros):
+    salida = []
+    vistos = set()
+
+    for n in numeros or []:
+        n = str(n).strip().replace(" ", "").replace("+", "")
+        if n and n not in vistos:
+            vistos.add(n)
+            salida.append(n)
+
+    return salida
+
+
+def guardar_destinatarios(id_encuesta, numeros):
+    numeros = normalizar_numeros(numeros)
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM destinatarios_encuesta WHERE encuesta_id=%s",
+                (id_encuesta,)
+            )
+
+            for numero in numeros:
+                cur.execute("""
+                    INSERT INTO destinatarios_encuesta (encuesta_id, telefono)
+                    VALUES (%s, %s)
+                    ON CONFLICT (encuesta_id, telefono) DO NOTHING
+                """, (id_encuesta, numero))
+
+        conn.commit()
+
+    return numeros
+
+
+def obtener_destinatarios(id_encuesta):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT telefono
+                FROM destinatarios_encuesta
+                WHERE encuesta_id=%s
+                ORDER BY id ASC
+            """, (id_encuesta,))
+            return [row[0] for row in cur.fetchall()]
+
+
+def guardar_estado_participante_encuesta(id_encuesta, numero, nuevo_estado):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO estados_participantes
+                    (encuesta_id, telefono, estado)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (encuesta_id, telefono)
+                DO UPDATE SET
+                    estado=EXCLUDED.estado,
+                    fecha_actualizacion=CURRENT_TIMESTAMP
+            """, (id_encuesta, numero, nuevo_estado))
+
+        conn.commit()
+
+
+def activar_encuesta(id_encuesta):
+    """
+    Activa una encuesta previamente programada/configurada.
+    Devuelve (ok, mensaje, encuesta).
+    """
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT *
+                FROM encuestas
+                WHERE id=%s
+                FOR UPDATE
+            """, (id_encuesta,))
+            encuesta = cur.fetchone()
+
+            if not encuesta:
+                return False, "Encuesta no encontrada", None
+
+            cur.execute("""
+                SELECT id
+                FROM encuestas
+                WHERE activa=TRUE AND id<>%s
+                LIMIT 1
+            """, (id_encuesta,))
+            otra = cur.fetchone()
+
+            if otra:
+                return (
+                    False,
+                    f"Ya hay una encuesta activa (#{otra['id']})",
+                    None
+                )
+
+            cur.execute("""
+                UPDATE encuestas
+                SET activa=TRUE,
+                    estado='ACTIVA',
+                    fecha_lanzamiento=CURRENT_TIMESTAMP,
+                    fecha_cierre_real=NULL
+                WHERE id=%s
+            """, (id_encuesta,))
+
+        conn.commit()
+
+    encuesta = obtener_encuesta(id_encuesta)
+    return True, "", encuesta
+
+
+def enviar_encuesta_a_destinatarios(id_encuesta):
+    encuesta = _encuesta_dict(obtener_encuesta(id_encuesta))
+    numeros = obtener_destinatarios(id_encuesta)
+
+    enviados = 0
+    errores = []
+
+    for numero in numeros:
+        try:
+            enviar_plantilla(numero, encuesta)
+            guardar_estado_participante_encuesta(
+                id_encuesta,
+                numero,
+                "esperando_respuesta"
+            )
+            enviados += 1
+        except Exception as ex:
+            errores.append({
+                "numero": numero,
+                "error": str(ex)
+            })
+
+    return enviados, errores
+
+
+def procesar_programaciones():
+    """
+    Comprueba las encuestas programadas y las activa/cierra cuando toca.
+    Se ejecuta en segundo plano cada minuto.
+    """
+    ahora = _ahora_local()
+
+    # Cerrar encuestas activas cuya hora de cierre haya pasado.
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET activa=FALSE,
+                    estado='CERRADA',
+                    fecha_cierre_real=CURRENT_TIMESTAMP
+                WHERE activa=TRUE
+                  AND cierre IS NOT NULL
+                  AND cierre <= %s
+            """, (ahora,))
+        conn.commit()
+
+    # Obtener encuestas que ya deben lanzarse.
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id
+                FROM encuestas
+                WHERE activa=FALSE
+                  AND estado='PROGRAMADA'
+                  AND fecha_programada IS NOT NULL
+                  AND fecha_programada <= %s
+                ORDER BY fecha_programada ASC, id ASC
+            """, (ahora,))
+            pendientes = cur.fetchall()
+
+    for row in pendientes:
+        id_encuesta = row["id"]
+
+        ok, mensaje, _ = activar_encuesta(id_encuesta)
+
+        if not ok:
+            print(f"⏳ No se pudo activar #{id_encuesta}: {mensaje}")
+            continue
+
+        enviados, errores = enviar_encuesta_a_destinatarios(id_encuesta)
+        print(
+            f"🚀 Encuesta programada #{id_encuesta} activada. "
+            f"Enviados: {enviados}. Errores: {len(errores)}"
+        )
+
+        if errores:
+            print(f"⚠️ Errores de envío: {errores}")
+
+
+def iniciar_scheduler():
+    """
+    Hilo sencillo para Render/Gunicorn con WEB_CONCURRENCY=1.
+    No crea procesos adicionales.
+    """
+    import threading
+    import time
+
+    def worker():
+        while True:
+            try:
+                procesar_programaciones()
+            except Exception as ex:
+                print(f"⚠️ Error en scheduler: {ex}")
+
+            time.sleep(60)
+
+    hilo = threading.Thread(
+        target=worker,
+        name="scheduler-encuestas",
+        daemon=True
+    )
+    hilo.start()
+
 
 
 # ============================================================
@@ -490,6 +737,9 @@ try:
 except Exception as ex:
     print(f"❌ Error conectando con PostgreSQL: {ex}")
     raise
+
+# Arranque del programador de encuestas.
+iniciar_scheduler()
 
 
 # ============================================================
@@ -1071,58 +1321,171 @@ def api_set_encuesta():
 @app.route("/api/lanzar", methods=["POST"])
 def api_lanzar():
     if not autenticado():
-        return jsonify({"error":"No autorizado"}),401
+        return jsonify({"error": "No autorizado"}), 401
 
-    d=request.json or {}
-    numeros=d.get("numeros",[])
-    id_solicitada=d.get("id")
-    encuesta=obtener_encuesta(int(id_solicitada)) if id_solicitada else obtener_ultima_encuesta()
+    d = request.json or {}
+    numeros = normalizar_numeros(d.get("numeros", []))
+    id_solicitada = d.get("id")
+    programar = bool(d.get("programar", False))
+
+    try:
+        id_encuesta = int(id_solicitada) if id_solicitada else None
+    except Exception:
+        return jsonify({"ok": False, "error": "ID inválido"}), 400
+
+    encuesta = (
+        obtener_encuesta(id_encuesta)
+        if id_encuesta
+        else obtener_ultima_encuesta()
+    )
 
     if not encuesta or not encuesta["texto"]:
-        return jsonify({"ok":False,"error":"No hay una encuesta configurada"}),400
+        return jsonify({
+            "ok": False,
+            "error": "No hay una encuesta configurada"
+        }), 400
 
+    if encuesta["activa"]:
+        return jsonify({
+            "ok": False,
+            "error": "La encuesta ya está activa"
+        }), 400
+
+    # Guardamos los teléfonos para que una encuesta programada
+    # pueda lanzarse aunque el navegador esté cerrado.
+    if numeros:
+        numeros = guardar_destinatarios(encuesta["id"], numeros)
+    else:
+        numeros = obtener_destinatarios(encuesta["id"])
+
+    if not numeros:
+        return jsonify({
+            "ok": False,
+            "error": "Debes cargar al menos un teléfono"
+        }), 400
+
+    fecha_programada = _fecha_db(d.get("fecha_programada"))
+
+    if programar:
+        if not fecha_programada:
+            return jsonify({
+                "ok": False,
+                "error": "Indica una fecha y hora de lanzamiento"
+            }), 400
+
+        ahora = _ahora_local()
+
+        if fecha_programada <= ahora:
+            return jsonify({
+                "ok": False,
+                "error": "La fecha de lanzamiento debe ser futura"
+            }), 400
+
+        cierre = _fecha_db(encuesta["cierre"])
+
+        if cierre and cierre <= fecha_programada:
+            return jsonify({
+                "ok": False,
+                "error": "La fecha de cierre debe ser posterior al lanzamiento"
+            }), 400
+
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE encuestas
+                    SET estado='PROGRAMADA',
+                        fecha_programada=%s,
+                        activa=FALSE,
+                        fecha_lanzamiento=NULL,
+                        fecha_cierre_real=NULL,
+                        destinatarios=%s
+                    WHERE id=%s
+                """, (
+                    fecha_programada,
+                    len(numeros),
+                    encuesta["id"]
+                ))
+            conn.commit()
+
+        return jsonify({
+            "ok": True,
+            "programada": True,
+            "encuesta_id": encuesta["id"],
+            "destinatarios": len(numeros),
+            "fecha_programada": _fecha_iso(fecha_programada)
+        })
+
+    # Lanzamiento inmediato.
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT id FROM encuestas
+                SELECT id
+                FROM encuestas
                 WHERE activa=TRUE AND id<>%s
                 LIMIT 1
-            """,(encuesta["id"],))
-            otra=cur.fetchone()
+            """, (encuesta["id"],))
+            otra = cur.fetchone()
 
     if otra:
-        return jsonify({"ok":False,"error":f"Ya hay una encuesta activa (#{otra['id']}). Ciérrala antes de lanzar la nueva."}),409
-
-    numeros_limpios=[]; vistos=set()
-    for n in numeros:
-        n=str(n).strip().replace(" ","").replace("+","")
-        if n and n not in vistos:
-            vistos.add(n); numeros_limpios.append(n)
+        return jsonify({
+            "ok": False,
+            "error": (
+                f"Ya hay una encuesta activa (#{otra['id']}). "
+                "Ciérrala antes de lanzar la nueva."
+            )
+        }), 409
 
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE encuestas
-                SET activa=TRUE, estado='ACTIVA',
+                SET activa=TRUE,
+                    estado='ACTIVA',
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
-                    fecha_cierre_real=NULL, destinatarios=%s
+                    fecha_programada=NULL,
+                    fecha_cierre_real=NULL,
+                    destinatarios=%s
                 WHERE id=%s
-            """,(len(numeros_limpios),encuesta["id"]))
-            cur.execute("DELETE FROM estados_participantes WHERE encuesta_id=%s",(encuesta["id"],))
-            cur.execute("DELETE FROM votos WHERE encuesta_id=%s",(encuesta["id"],))
+            """, (len(numeros), encuesta["id"]))
+
+            cur.execute(
+                "DELETE FROM estados_participantes WHERE encuesta_id=%s",
+                (encuesta["id"],)
+            )
+            cur.execute(
+                "DELETE FROM votos WHERE encuesta_id=%s",
+                (encuesta["id"],)
+            )
+
         conn.commit()
 
-    encuesta=cargar_encuesta_activa()
-    enviados=0; errores=[]
-    for n in numeros_limpios:
-        try:
-            enviar_plantilla(n,encuesta)
-            guardar_estado_participante(n,"esperando_respuesta")
-            enviados+=1
-        except Exception as ex:
-            errores.append({"numero":n,"error":str(ex)})
+    encuesta_activa = _encuesta_dict(obtener_encuesta(encuesta["id"]))
 
-    return jsonify({"ok":True,"encuesta_id":encuesta["id"],"enviados":enviados,"errores":errores})
+    enviados = 0
+    errores = []
+
+    for numero in numeros:
+        try:
+            enviar_plantilla(numero, encuesta_activa)
+            guardar_estado_participante_encuesta(
+                encuesta["id"],
+                numero,
+                "esperando_respuesta"
+            )
+            enviados += 1
+        except Exception as ex:
+            errores.append({
+                "numero": numero,
+                "error": str(ex)
+            })
+
+    return jsonify({
+        "ok": True,
+        "encuesta_id": encuesta["id"],
+        "enviados": enviados,
+        "errores": errores,
+        "programada": False
+    })
 
 
 @app.route("/api/cerrar", methods=["POST"])
@@ -1154,11 +1517,12 @@ def api_encuestas():
     salida=[]
     for row in rows:
         x=dict(row)
-        for k in ["fecha_creacion","fecha_lanzamiento","fecha_cierre_real","cierre"]:
+        for k in ["fecha_creacion","fecha_lanzamiento","fecha_programada","fecha_cierre_real","cierre"]:
             if x.get(k): x[k]=_fecha_iso(x[k])
         x["activa"]=bool(x["activa"])
         if x["activa"]: st="ACTIVA"
         elif x.get("estado")=="CERRADA": st="CERRADA"
+        elif x.get("estado")=="PROGRAMADA": st="PROGRAMADA"
         elif x.get("estado")=="BORRADOR":
             dt=_fecha_db(x.get("cierre"))
             st="PROGRAMADA" if dt and _ahora_local()<=dt else "BORRADOR"
@@ -1236,6 +1600,216 @@ def api_pregunta_legacy():
 # ============================================================
 # API RESULTADOS PÚBLICA
 # ============================================================
+
+@app.route("/api/exportar/<int:id_encuesta>")
+def api_exportar_excel(id_encuesta):
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    encuesta = obtener_encuesta(id_encuesta)
+
+    if not encuesta:
+        return jsonify({
+            "ok": False,
+            "error": "Encuesta no encontrada"
+        }), 404
+
+    e = _encuesta_dict(encuesta)
+    resumen = resumen_votos(id_encuesta)
+    numeros = obtener_destinatarios(id_encuesta)
+
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, telefono, respuesta, fecha
+                FROM votos
+                WHERE encuesta_id=%s
+                ORDER BY fecha ASC
+            """, (id_encuesta,))
+            votos = cur.fetchall()
+
+            cur.execute("""
+                SELECT telefono, estado, fecha_actualizacion
+                FROM estados_participantes
+                WHERE encuesta_id=%s
+                ORDER BY telefono ASC
+            """, (id_encuesta,))
+            estados = cur.fetchall()
+
+    wb = Workbook()
+
+    # Hoja resumen
+    ws = wb.active
+    ws.title = "Resumen"
+    ws.append(["ENCUESTA", f"#{id_encuesta}"])
+    ws.append(["Pregunta", e.get("texto", "")])
+    ws.append(["Tipo", e.get("tipo", "")])
+    ws.append(["Estado", e.get("estado", "")])
+    ws.append(["Fecha creación", e.get("fecha_creacion") or ""])
+    ws.append(["Fecha programada", e.get("fecha_programada") or ""])
+    ws.append(["Fecha lanzamiento", e.get("fecha_lanzamiento") or ""])
+    ws.append(["Fecha cierre previsto", e.get("cierre") or ""])
+    ws.append(["Fecha cierre real", e.get("fecha_cierre_real") or ""])
+    ws.append(["Destinatarios", e.get("destinatarios", len(numeros)) or 0])
+    ws.append(["Respuestas", resumen["total"]])
+
+    destinatarios = e.get("destinatarios", len(numeros)) or 0
+    participacion = (
+        resumen["total"] / destinatarios
+        if destinatarios else 0
+    )
+    ws.append(["Participación", participacion])
+    ws.append([])
+    ws.append(["Respuesta", "Cantidad"])
+
+    for respuesta, cantidad in resumen["conteo"].items():
+        ws.append([respuesta, cantidad])
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 70
+
+    # Hoja respuestas
+    ws2 = wb.create_sheet("Respuestas")
+    ws2.append(["ID", "Teléfono", "Respuesta", "Fecha"])
+
+    for voto in votos:
+        ws2.append([
+            voto["id"],
+            voto["telefono"],
+            voto["respuesta"],
+            voto["fecha"].strftime("%Y-%m-%d %H:%M:%S")
+            if voto["fecha"] else ""
+        ])
+
+    ws2.column_dimensions["A"].width = 12
+    ws2.column_dimensions["B"].width = 22
+    ws2.column_dimensions["C"].width = 20
+    ws2.column_dimensions["D"].width = 22
+
+    # Hoja participantes
+    ws3 = wb.create_sheet("Participantes")
+    ws3.append(["Teléfono", "Estado", "Última actualización"])
+
+    estados_por_numero = {
+        x["telefono"]: x for x in estados
+    }
+
+    for numero in numeros:
+        x = estados_por_numero.get(numero)
+        ws3.append([
+            numero,
+            x["estado"] if x else "sin_estado",
+            x["fecha_actualizacion"].strftime("%Y-%m-%d %H:%M:%S")
+            if x and x["fecha_actualizacion"] else ""
+        ])
+
+    ws3.column_dimensions["A"].width = 22
+    ws3.column_dimensions["B"].width = 25
+    ws3.column_dimensions["C"].width = 25
+
+    # Formato básico
+    for sheet in [ws, ws2, ws3]:
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+
+    ws["B12"].number_format = "0.0%"
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    nombre = f"encuesta_{id_encuesta}.xlsx"
+
+    return send_from_directory if False else __import__("flask").send_file(
+        output,
+        as_attachment=True,
+        download_name=nombre,
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        )
+    )
+
+
+@app.route("/api/exportar")
+def api_exportar_todas():
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    encuestas = listar_encuestas()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Encuestas"
+    ws.append([
+        "ID", "Pregunta", "Tipo", "Estado", "Destinatarios",
+        "Respuestas", "Participación", "Fecha creación",
+        "Fecha programada", "Fecha lanzamiento", "Fecha cierre real"
+    ])
+
+    for e in encuestas:
+        e = dict(e)
+        total = int(e.get("respuestas", 0) or 0)
+        dest = int(e.get("destinatarios", 0) or 0)
+        ws.append([
+            e["id"],
+            e["texto"],
+            e["tipo"],
+            e["estado"],
+            dest,
+            total,
+            total / dest if dest else 0,
+            _fecha_iso(e.get("fecha_creacion")),
+            _fecha_iso(e.get("fecha_programada")),
+            _fecha_iso(e.get("fecha_lanzamiento")),
+            _fecha_iso(e.get("fecha_cierre_real"))
+        ])
+
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 70
+    for col in "CDEFGHIJK":
+        ws.column_dimensions[col].width = 20
+
+    ws2 = wb.create_sheet("Respuestas")
+    ws2.append(["Encuesta ID", "Pregunta", "Teléfono", "Respuesta", "Fecha"])
+
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT v.encuesta_id, e.texto, v.telefono, v.respuesta, v.fecha
+                FROM votos v
+                JOIN encuestas e ON e.id=v.encuesta_id
+                ORDER BY v.encuesta_id DESC, v.fecha ASC
+            """)
+            for r in cur.fetchall():
+                ws2.append([
+                    r["encuesta_id"],
+                    r["texto"],
+                    r["telefono"],
+                    r["respuesta"],
+                    _fecha_iso(r["fecha"])
+                ])
+
+    ws2.column_dimensions["A"].width = 15
+    ws2.column_dimensions["B"].width = 70
+    ws2.column_dimensions["C"].width = 22
+    ws2.column_dimensions["D"].width = 20
+    ws2.column_dimensions["E"].width = 22
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return __import__("flask").send_file(
+        output,
+        as_attachment=True,
+        download_name="historico_encuestas.xlsx",
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        )
+    )
+
 
 @app.route("/api/resultados")
 def api_resultados():
