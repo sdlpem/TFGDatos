@@ -27,6 +27,7 @@ RESULTADOS_URL = os.environ.get(
 )
 PLANTILLA_OPCIONES = os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
 PLANTILLA_NUEVO_PARTICIPANTE = os.environ.get("PLANTILLA_NUEVO_PARTICIPANTE", "nuevo_participante")
+WHATSAPP_INVITACION_URL = "https://wa.me/34644052889"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -124,6 +125,27 @@ def init_db():
                     codigo_invitacion VARCHAR(20) UNIQUE,
                     invitado_por INTEGER NULL REFERENCES participantes(id) ON DELETE SET NULL
                 )
+            """)
+
+            # Control del primer alta y del paso temporal de invitación.
+            # primera_alta_at NO se borra al darse de baja: así una reactivación
+            # posterior no vuelve a preguntar por el código de invitación.
+            cur.execute("""
+                ALTER TABLE participantes
+                ADD COLUMN IF NOT EXISTS primera_alta_at TIMESTAMP NULL
+            """)
+
+            cur.execute("""
+                ALTER TABLE participantes
+                ADD COLUMN IF NOT EXISTS flujo VARCHAR(40) NULL
+            """)
+
+            # Migración segura para participantes antiguos que ya tuvieron un alta.
+            cur.execute("""
+                UPDATE participantes
+                SET primera_alta_at = fecha_alta
+                WHERE primera_alta_at IS NULL
+                  AND fecha_alta IS NOT NULL
             """)
 
         conn.commit()
@@ -391,12 +413,14 @@ def activar_participante(numero, invitado_por=None):
             existente = cur.fetchone()
 
             if existente:
+                # primera_alta_at solo se establece una vez.
                 cur.execute("""
                     UPDATE participantes
                     SET estado='ACTIVO',
                         consentimiento=TRUE,
                         fecha_alta=CURRENT_TIMESTAMP,
                         fecha_baja=NULL,
+                        primera_alta_at=COALESCE(primera_alta_at, CURRENT_TIMESTAMP),
                         invitado_por=COALESCE(invitado_por, %s)
                     WHERE telefono=%s
                     RETURNING *
@@ -404,8 +428,9 @@ def activar_participante(numero, invitado_por=None):
             else:
                 cur.execute("""
                     INSERT INTO participantes
-                        (telefono, estado, consentimiento, fecha_alta, codigo_invitacion, invitado_por)
-                    VALUES (%s, 'ACTIVO', TRUE, CURRENT_TIMESTAMP, %s, %s)
+                        (telefono, estado, consentimiento, fecha_alta, primera_alta_at,
+                         codigo_invitacion, invitado_por)
+                    VALUES (%s, 'ACTIVO', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, %s)
                     RETURNING *
                 """, (numero, generar_codigo_invitacion(), invitado_por))
 
@@ -416,13 +441,13 @@ def activar_participante(numero, invitado_por=None):
 def dar_de_baja_participante(numero):
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""UPDATE participantes SET estado='BAJA', consentimiento=FALSE, fecha_baja=CURRENT_TIMESTAMP WHERE telefono=%s""", (numero,))
+            cur.execute("""UPDATE participantes SET estado='BAJA', consentimiento=FALSE, fecha_baja=CURRENT_TIMESTAMP, flujo=NULL WHERE telefono=%s""", (numero,))
         conn.commit()
 
 def listar_participantes():
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("""SELECT id, telefono, estado, consentimiento, fecha_alta, fecha_baja, codigo_invitacion, invitado_por FROM participantes ORDER BY id DESC""")
+            cur.execute("""SELECT id, telefono, estado, consentimiento, fecha_alta, fecha_baja, primera_alta_at, codigo_invitacion, invitado_por, flujo FROM participantes ORDER BY id DESC""")
             return cur.fetchall()
 
 def obtener_activos():
@@ -1172,13 +1197,30 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
     texto_limpio = (texto or button_text or button_id or "").strip()
     comando = texto_limpio.upper()
 
-    # Invitación: QUIERO PARTICIPAR ABC123
-    if comando.startswith("QUIERO PARTICIPAR"):
-        partes = comando.split()
-        codigo = partes[-1] if len(partes) >= 3 else ""
-        invitador = None
+    # El código de invitación ya NO se introduce con un comando especial.
+    # Se solicita únicamente durante la primera alta, después de aceptar la bienvenida.
 
-        if codigo:
+    # Primera alta: después de pulsar SÍ, pedimos el código de invitación.
+    if participante["estado"] == "ACTIVO" and participante.get("flujo") == "ESPERANDO_INVITACION":
+        if comando == "NO":
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE participantes SET flujo=NULL WHERE telefono=%s",
+                        (numero,)
+                    )
+                conn.commit()
+            enviar_texto(
+                numero,
+                "✅ ¡Perfecto! Ya estás registrado como participante.\n\n"
+                "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
+                "Escribe AYUDA para ver las opciones."
+            )
+            return
+
+        # Admitimos el código directamente, con o sin espacios.
+        codigo = re.sub(r"\s+", "", texto_limpio).upper()
+        if re.fullmatch(r"[A-F0-9]{8}", codigo):
             with db_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -1186,32 +1228,61 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
                         (codigo,)
                     )
                     row = cur.fetchone()
-                    invitador = row[0] if row else None
 
-        if invitador or not codigo:
-            activar_participante(numero, invitador)
-            enviar_texto(
-                numero,
-                "✅ ¡Listo! Ya estás registrado como participante.\n\n"
-                "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
-                "Escribe AYUDA para ver las opciones."
-            )
-        else:
-            enviar_texto(
-                numero,
-                "❌ El código de invitación no es válido. Escribe AYUDA si necesitas ayuda."
-            )
+                    if row and row[0] != participante["id"]:
+                        cur.execute(
+                            """UPDATE participantes
+                               SET invitado_por=%s, flujo=NULL
+                               WHERE telefono=%s""",
+                            (row[0], numero)
+                        )
+                        valido = True
+                    else:
+                        valido = False
+                conn.commit()
+
+            if valido:
+                enviar_texto(
+                    numero,
+                    "✅ ¡Perfecto! Tu código de invitación es válido y tu registro ha quedado completado.\n\n"
+                    "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
+                    "Escribe AYUDA para ver las opciones."
+                )
+            else:
+                enviar_texto(
+                    numero,
+                    "❌ Ese código de invitación no es válido. Comprueba el código y vuelve a introducirlo, "
+                    "o responde *NO* si no tienes código."
+                )
+            return
+
+        enviar_texto(
+            numero,
+            "No he reconocido ese código. Introduce el código de invitación de 8 caracteres, "
+            "o responde *NO* si no tienes código."
+        )
         return
 
-    # Consentimiento de una persona nueva.
+    # Primera alta: el SÍ de la plantilla de bienvenida activa al participante
+    # y abre el paso opcional del código. Una reactivación posterior no entra aquí.
     if participante["estado"] == "NUEVO":
         if comando in ["SI", "SÍ", "ACEPTO", "QUIERO PARTICIPAR"]:
-            activar_participante(numero)
+            p = activar_participante(numero)
+
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE participantes SET flujo='ESPERANDO_INVITACION' WHERE telefono=%s AND primera_alta_at IS NOT NULL",
+                        (numero,)
+                    )
+                conn.commit()
+
             enviar_texto(
                 numero,
-                "✅ ¡Gracias! Ya estás registrado como participante. Cuando haya una "
-                "encuesta activa recibirás la pregunta por aquí.\n\n"
-                "Escribe AYUDA para ver las opciones."
+                "✅ ¡Gracias por participar!\n\n"
+                "¿Tienes algún código de invitación?\n\n"
+                "Si alguien te ha invitado, introduce ahora su código.\n"
+                "Si no tienes ninguno, responde *NO*."
             )
         elif comando in ["NO", "NO GRACIAS"]:
             dar_de_baja_participante(numero)
@@ -1224,8 +1295,7 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
             enviar_texto(
                 numero,
                 "👋 ¡Hola! Este es el canal de participación en las encuestas.\n\n"
-                "¿Quieres participar? Responde *SÍ* o *NO*.\n\n"
-                "Si has recibido un código de invitación, escribe *QUIERO PARTICIPAR CÓDIGO*."
+                "¿Quieres participar? Pulsa *Sí* o *No* en la plantilla de bienvenida."
             )
         return
 
@@ -1241,6 +1311,10 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
 
     if comando == "ALTA":
         activar_participante(numero)
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE participantes SET flujo=NULL WHERE telefono=%s", (numero,))
+            conn.commit()
         enviar_texto(numero, "✅ Has vuelto a activar tu participación. Recibirás las próximas encuestas.")
         return
 
@@ -1263,11 +1337,16 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
         return
 
     if comando == "INVITAR":
+        mensaje_invitacion = (
+            "👋 ¡Hola! Estoy participando en un proyecto de encuestas y puedes participar tú también.\n\n"
+            f"👉 Únete aquí: {WHATSAPP_INVITACION_URL}\n\n"
+            "Cuando te registres, el sistema te preguntará si tienes un código de invitación. "
+            f"Introduce este código: *{participante['codigo_invitacion']}*\n\n"
+            "¡Gracias por participar!"
+        )
         enviar_texto(
             numero,
-            f"👥 Invita a otra persona a participar.\n\n"
-            f"Tu código de invitación es: *{participante['codigo_invitacion']}*\n\n"
-            f"La otra persona debe escribir en este chat: *QUIERO PARTICIPAR {participante['codigo_invitacion']}*"
+            "👥 *Mensaje para reenviar:*\n\n" + mensaje_invitacion
         )
         return
 
