@@ -25,6 +25,8 @@ RESULTADOS_URL = os.environ.get(
     "RESULTADOS_URL",
     "https://tfgdatos.onrender.com/resultados"
 )
+PLANTILLA_OPCIONES = os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
+PLANTILLA_NUEVO_PARTICIPANTE = os.environ.get("PLANTILLA_NUEVO_PARTICIPANTE", "nuevo_participante")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -190,7 +192,8 @@ def _encuesta_dict(row):
             ),
             "plantilla_abierta": os.environ.get(
                 "PLANTILLA_ABIERTA", "plantilla_dinamica"
-            )
+            ),
+            "plantilla_opciones": os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
         }
 
     return {
@@ -213,7 +216,8 @@ def _encuesta_dict(row):
         ),
         "plantilla_abierta": os.environ.get(
             "PLANTILLA_ABIERTA", "plantilla_dinamica"
-        )
+        ),
+        "plantilla_opciones": os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
     }
 
 
@@ -378,17 +382,34 @@ def asegurar_participante(numero):
 
 def activar_participante(numero, invitado_por=None):
     numero = normalizar_numero(numero)
+    if not numero:
+        return None
+
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("""
-                INSERT INTO participantes (telefono, estado, consentimiento, fecha_alta, codigo_invitacion, invitado_por)
-                VALUES (%s, 'ACTIVO', TRUE, CURRENT_TIMESTAMP, %s, %s)
-                ON CONFLICT (telefono) DO UPDATE SET
-                    estado='ACTIVO', consentimiento=TRUE, fecha_alta=CURRENT_TIMESTAMP, fecha_baja=NULL,
-                    invitado_por=COALESCE(participantes.invitado_por, EXCLUDED.invitado_por)
-                RETURNING *
-            """, (numero, generar_codigo_invitacion(), invitado_por))
-            p=cur.fetchone()
+            cur.execute("SELECT * FROM participantes WHERE telefono=%s", (numero,))
+            existente = cur.fetchone()
+
+            if existente:
+                cur.execute("""
+                    UPDATE participantes
+                    SET estado='ACTIVO',
+                        consentimiento=TRUE,
+                        fecha_alta=CURRENT_TIMESTAMP,
+                        fecha_baja=NULL,
+                        invitado_por=COALESCE(invitado_por, %s)
+                    WHERE telefono=%s
+                    RETURNING *
+                """, (invitado_por, numero))
+            else:
+                cur.execute("""
+                    INSERT INTO participantes
+                        (telefono, estado, consentimiento, fecha_alta, codigo_invitacion, invitado_por)
+                    VALUES (%s, 'ACTIVO', TRUE, CURRENT_TIMESTAMP, %s, %s)
+                    RETURNING *
+                """, (numero, generar_codigo_invitacion(), invitado_por))
+
+            p = cur.fetchone()
         conn.commit()
     return p
 
@@ -905,11 +926,71 @@ def enviar_texto(numero, texto):
     print(f"📤 Texto {numero}: {r.status_code} {r.text}")
 
 
-def enviar_plantilla(numero, encuesta):
-    if not WA_TOKEN or not WA_PHONE_ID:
-        print("⚠️ Sin credenciales WhatsApp para plantilla")
-        return
+def _respuesta_http_whatsapp(response, contexto):
+    """Comprueba la respuesta de Meta y lanza error si el envío ha fallado."""
+    if not response.ok:
+        raise RuntimeError(
+            f"Error WhatsApp ({response.status_code}) en {contexto}: {response.text}"
+        )
 
+
+def _enviar_template(nombre, numero, componentes=None):
+    if not WA_TOKEN or not WA_PHONE_ID:
+        raise RuntimeError("WA_TOKEN o WA_PHONE_ID no están configurados")
+
+    payload_template = {
+        "name": nombre,
+        "language": {"code": "es"}
+    }
+    if componentes:
+        payload_template["components"] = componentes
+
+    r = requests.post(
+        f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {WA_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": numero,
+            "type": "template",
+            "template": payload_template
+        },
+        timeout=20
+    )
+
+    print(f"📤 Plantilla '{nombre}' → {numero}: {r.status_code} {r.text}")
+    _respuesta_http_whatsapp(r, f"plantilla '{nombre}'")
+    return r.json() if r.content else {}
+
+
+def enviar_plantilla_nuevo_participante(numero):
+    """Envía la plantilla aprobada de consentimiento inicial."""
+    return _enviar_template(PLANTILLA_NUEVO_PARTICIPANTE, numero)
+
+
+def _opciones_con_letras(opciones):
+    """Devuelve [(A, texto), (B, texto), ...] para las opciones de una encuesta."""
+    salida = []
+    for i, opcion in enumerate(opciones or []):
+        if i >= 26:
+            break
+        letra = chr(65 + i)
+        salida.append((letra, str(opcion).strip()))
+    return salida
+
+
+def _texto_opciones(encuesta):
+    """Texto que se inyecta en {{2}} de plantilla_opciones."""
+    pares = _opciones_con_letras(encuesta.get("opciones") or [])
+    if not pares:
+        return ""
+    return "\n".join(f"{letra}. {texto}" for letra, texto in pares)
+
+
+def enviar_plantilla(numero, encuesta):
+    """Envía la plantilla correspondiente al tipo de encuesta."""
     tipo = encuesta.get("tipo", "sino")
 
     if tipo == "sino":
@@ -917,26 +998,43 @@ def enviar_plantilla(numero, encuesta):
             "plantilla_sino",
             os.environ.get("PLANTILLA_SINO", "plantilla_dinamica")
         )
-        formato = "Responda con SÍ o NO"
+        # Conservamos el formato de variables que ya usa la plantilla SÍ/NO actual.
+        componentes = [{
+            "type": "body",
+            "parameters": [{
+                "type": "text",
+                "parameter_name": "pregunta",
+                "text": encuesta.get("texto", "")
+            }]
+        }]
+
+    elif tipo == "opciones":
+        nombre = encuesta.get(
+            "plantilla_opciones",
+            os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
+        )
+        # Esta plantilla fue creada en Meta con variables numéricas {{1}} y {{2}}.
+        componentes = [{
+            "type": "body",
+            "parameters": [
+                {
+                    "type": "text",
+                    "text": encuesta.get("texto", "")
+                },
+                {
+                    "type": "text",
+                    "text": _texto_opciones(encuesta)
+                }
+            ]
+        }]
+
     else:
         nombre = encuesta.get(
             "plantilla_abierta",
             os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
         )
         formato = formato_instrucciones(encuesta)
-
-    if tipo == "sino":
-        componentes = [{
-            "type": "body",
-            "parameters": [
-                {
-                    "type": "text",
-                    "parameter_name": "pregunta",
-                    "text": encuesta.get("texto", "")
-                }
-            ]
-        }]
-    else:
+        # Conservamos el formato de variables que ya usa la plantilla abierta actual.
         componentes = [{
             "type": "body",
             "parameters": [
@@ -953,29 +1051,7 @@ def enviar_plantilla(numero, encuesta):
             ]
         }]
 
-    r = requests.post(
-        f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
-        headers={
-            "Authorization": f"Bearer {WA_TOKEN}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "messaging_product": "whatsapp",
-            "to": numero,
-            "type": "template",
-            "template": {
-                "name": nombre,
-                "language": {"code": "es"},
-                "components": componentes
-            }
-        }
-    )
-
-    print(
-        f"📤 Plantilla '{nombre}' → {numero}: "
-        f"{r.status_code} {r.text}"
-    )
-
+    return _enviar_template(nombre, numero, componentes)
 
 def enviar_confirmacion(numero, valor):
     """Mensaje enviado después de registrar un voto."""
@@ -996,9 +1072,9 @@ def enviar_confirmacion(numero, valor):
 # ============================================================
 
 def validar(texto, encuesta):
+    texto = (texto or "").strip()
     t = (
-        texto.strip()
-        .upper()
+        texto.upper()
         .replace("Í", "I")
         .replace("É", "E")
         .replace("Á", "A")
@@ -1011,53 +1087,43 @@ def validar(texto, encuesta):
     if tipo == "sino":
         if t in ["SI", "S"]:
             return True, "SÍ"
-
         if t in ["NO", "N"]:
             return True, "NO"
-
         return False, None
 
     if tipo == "porcentaje":
         try:
-            v = float(
-                texto.strip()
-                .replace("%", "")
-                .replace(",", ".")
-            )
-
-            mn = encuesta.get("min")
-            mx = encuesta.get("max")
-
-            if mn is None:
-                mn = 0
-
-            if mx is None:
-                mx = 100
-
+            v = float(texto.replace("%", "").replace(",", "."))
+            mn = encuesta.get("min") if encuesta.get("min") is not None else 0
+            mx = encuesta.get("max") if encuesta.get("max") is not None else 100
             if mn <= v <= mx:
                 return True, f"{v}%"
-
             return False, None
-
         except Exception:
             return False, None
 
     if tipo == "numero":
         try:
-            v = float(texto.strip().replace(",", "."))
+            v = float(texto.replace(",", "."))
             mn = encuesta.get("min")
             mx = encuesta.get("max")
-            if mn is not None and v < mn: return False, None
-            if mx is not None and v > mx: return False, None
+            if mn is not None and v < mn:
+                return False, None
+            if mx is not None and v > mx:
+                return False, None
             return True, str(v)
         except Exception:
             return False, None
 
     if tipo == "opciones":
         opciones = encuesta.get("opciones") or []
-        for opcion in opciones:
-            if t == str(opcion).strip().upper():
-                return True, str(opcion).strip()
+        pares = _opciones_con_letras(opciones)
+
+        # Permite pulsar A/B/C/D o escribir cualquier letra hasta Z.
+        for letra, opcion in pares:
+            if t == letra or t == opcion.upper():
+                return True, opcion
+
         return False, None
 
     return False, None
@@ -1069,24 +1135,20 @@ def formato_instrucciones(encuesta):
     if tipo == "porcentaje":
         mn = encuesta.get("min", 0)
         mx = encuesta.get("max", 100)
-
-        return (
-            f"con un porcentaje entre {mn}% y {mx}% "
-            f"(ejemplo: 3.5)"
-        )
+        return f"con un porcentaje entre {mn}% y {mx}% (ejemplo: 65%)"
 
     if tipo == "numero":
         mn = encuesta.get("min")
         mx = encuesta.get("max")
-
         if mn is not None and mx is not None:
             return f"con un número entre {mn} y {mx}"
-
         return "con un número"
 
     if tipo == "opciones":
-        opciones = encuesta.get("opciones") or []
-        return "con una opción: " + ", ".join(opciones)
+        pares = _opciones_con_letras(encuesta.get("opciones") or [])
+        if not pares:
+            return "con una de las opciones disponibles"
+        return "con una de las opciones (" + ", ".join(letra for letra, _ in pares) + ")"
 
     return ""
 
@@ -1098,52 +1160,90 @@ def formato_instrucciones(encuesta):
 def enviar_ayuda(numero):
     enviar_texto(numero, "ℹ️ Opciones disponibles:\n\nENCUESTA — participar en la encuesta activa\nRESULTADOS — ver resultados\nINVITAR — obtener tu código de invitación\nCAMBIAR — modificar tu respuesta\nBAJA — dejar de recibir encuestas\nAYUDA — ver este menú")
 
-def procesar(numero, texto=None, button_id=None):
+def procesar(numero, texto=None, button_id=None, button_text=None):
     numero = normalizar_numero(numero)
     if not numero:
         return
+
     participante = asegurar_participante(numero)
-    texto_limpio = (texto or "").strip()
+
+    # Para botones de WhatsApp usamos el título visible como texto principal.
+    # Si Meta no lo incluye, usamos el ID del botón como alternativa.
+    texto_limpio = (texto or button_text or button_id or "").strip()
     comando = texto_limpio.upper()
 
     # Invitación: QUIERO PARTICIPAR ABC123
     if comando.startswith("QUIERO PARTICIPAR"):
-        partes=comando.split()
-        codigo=partes[-1] if len(partes)>=3 else ""
-        invitador=None
+        partes = comando.split()
+        codigo = partes[-1] if len(partes) >= 3 else ""
+        invitador = None
+
         if codigo:
             with db_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM participantes WHERE codigo_invitacion=%s", (codigo,))
-                    row=cur.fetchone(); invitador=row[0] if row else None
+                    cur.execute(
+                        "SELECT id FROM participantes WHERE codigo_invitacion=%s",
+                        (codigo,)
+                    )
+                    row = cur.fetchone()
+                    invitador = row[0] if row else None
+
         if invitador or not codigo:
-            p=activar_participante(numero, invitador)
-            enviar_texto(numero, "✅ ¡Listo! Ya estás registrado como participante.\n\nCuando haya una encuesta activa recibirás la pregunta por aquí. Escribe AYUDA para ver las opciones.")
+            activar_participante(numero, invitador)
+            enviar_texto(
+                numero,
+                "✅ ¡Listo! Ya estás registrado como participante.\n\n"
+                "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
+                "Escribe AYUDA para ver las opciones."
+            )
         else:
-            enviar_texto(numero, "❌ El código de invitación no es válido. Escribe AYUDA si necesitas ayuda.")
+            enviar_texto(
+                numero,
+                "❌ El código de invitación no es válido. Escribe AYUDA si necesitas ayuda."
+            )
         return
 
     # Consentimiento de una persona nueva.
     if participante["estado"] == "NUEVO":
         if comando in ["SI", "SÍ", "ACEPTO", "QUIERO PARTICIPAR"]:
             activar_participante(numero)
-            enviar_texto(numero, "✅ ¡Gracias! Ya estás registrado como participante. Cuando haya una encuesta activa recibirás la pregunta por aquí.\n\nEscribe AYUDA para ver las opciones.")
+            enviar_texto(
+                numero,
+                "✅ ¡Gracias! Ya estás registrado como participante. Cuando haya una "
+                "encuesta activa recibirás la pregunta por aquí.\n\n"
+                "Escribe AYUDA para ver las opciones."
+            )
         elif comando in ["NO", "NO GRACIAS"]:
             dar_de_baja_participante(numero)
-            enviar_texto(numero, "De acuerdo. No recibirás encuestas. Si quieres participar en el futuro, escribe ALTA.")
+            enviar_texto(
+                numero,
+                "De acuerdo. No recibirás encuestas. Si quieres participar en el futuro, "
+                "escribe ALTA."
+            )
         else:
-            enviar_texto(numero, "👋 ¡Hola! Este es el canal de participación en las encuestas.\n\n¿Quieres participar? Responde *SÍ* o *NO*.\n\nSi has recibido un código de invitación, escribe *QUIERO PARTICIPAR CÓDIGO*.")
+            enviar_texto(
+                numero,
+                "👋 ¡Hola! Este es el canal de participación en las encuestas.\n\n"
+                "¿Quieres participar? Responde *SÍ* o *NO*.\n\n"
+                "Si has recibido un código de invitación, escribe *QUIERO PARTICIPAR CÓDIGO*."
+            )
         return
 
     # BAJA / ALTA son comandos globales.
     if comando == "BAJA":
         dar_de_baja_participante(numero)
-        enviar_texto(numero, "👋 Te has dado de baja correctamente. No recibirás nuevas encuestas. Puedes volver cuando quieras escribiendo ALTA.")
+        enviar_texto(
+            numero,
+            "👋 Te has dado de baja correctamente. No recibirás nuevas encuestas. "
+            "Puedes volver cuando quieras escribiendo ALTA."
+        )
         return
+
     if comando == "ALTA":
         activar_participante(numero)
         enviar_texto(numero, "✅ Has vuelto a activar tu participación. Recibirás las próximas encuestas.")
         return
+
     if participante["estado"] == "BAJA":
         if comando in ["AYUDA", "MENU", "OPCIONES"]:
             enviar_texto(numero, "Estás dado de baja y no recibirás encuestas. Escribe ALTA para volver a participar.")
@@ -1152,59 +1252,75 @@ def procesar(numero, texto=None, button_id=None):
         return
 
     if comando in ["AYUDA", "MENU", "OPCIONES"]:
-        enviar_ayuda(numero); return
+        enviar_ayuda(numero)
+        return
+
     if comando == "RESULTADOS":
-        enviar_texto(numero, f"📊 Consulta los resultados aquí:\n{RESULTADOS_URL}"); return
+        enviar_texto(numero, f"📊 Consulta los resultados aquí:\n{RESULTADOS_URL}")
+        return
+
     if comando == "INVITAR":
-        enviar_texto(numero, f"👥 Invita a otra persona a participar.\n\nTu código de invitación es: *{participante['codigo_invitacion']}*\n\nLa otra persona debe escribir en este chat: *QUIERO PARTICIPAR {participante['codigo_invitacion']}*")
+        enviar_texto(
+            numero,
+            f"👥 Invita a otra persona a participar.\n\n"
+            f"Tu código de invitación es: *{participante['codigo_invitacion']}*\n\n"
+            f"La otra persona debe escribir en este chat: *QUIERO PARTICIPAR {participante['codigo_invitacion']}*"
+        )
         return
 
     encuesta = cargar_encuesta_activa()
     if not encuesta.get("id"):
-        enviar_ayuda(numero); return
+        enviar_ayuda(numero)
+        return
 
     estado = cargar_estado_participante(numero)
+
     if comando == "ENCUESTA":
         guardar_estado_participante_encuesta(encuesta["id"], numero, "esperando_respuesta")
-        enviar_plantilla(numero, encuesta); return
+        enviar_plantilla(numero, encuesta)
+        return
+
     if comando == "CAMBIAR":
         if estado != "confirmado":
-            enviar_texto(numero, "Todavía no tienes una respuesta registrada. Escribe ENCUESTA para participar."); return
+            enviar_texto(numero, "Todavía no tienes una respuesta registrada. Escribe ENCUESTA para participar.")
+            return
         guardar_estado_participante(numero, "esperando_cambio")
-        enviar_plantilla(numero, encuesta); return
+        enviar_plantilla(numero, encuesta)
+        return
 
     if estado in ["esperando_respuesta", "esperando_cambio"] or comando == "ENCUESTA":
         ok, valor = validar(texto_limpio, encuesta)
         if not ok:
-            enviar_texto(numero, f"❌ Respuesta no válida. {encuesta['texto']}\n\nResponde {formato_instrucciones(encuesta) or 'con SÍ o NO'}")
+            enviar_texto(
+                numero,
+                f"❌ Respuesta no válida. {encuesta['texto']}\n\n"
+                f"Responde {formato_instrucciones(encuesta) or 'con SÍ o NO'}"
+            )
             return
         guardar_voto(numero, valor)
         enviar_confirmacion(numero, valor)
         return
 
     if estado == "confirmado":
-        enviar_texto(numero, "Tu voto ya está registrado. Escribe CAMBIAR para modificarlo, RESULTADOS para ver los resultados o AYUDA para ver las opciones.")
+        enviar_texto(
+            numero,
+            "Tu voto ya está registrado. Escribe CAMBIAR para modificarlo, "
+            "RESULTADOS para ver los resultados o AYUDA para ver las opciones."
+        )
     else:
         enviar_ayuda(numero)
 
-
-# ============================================================
-# WEBHOOK
-# ============================================================
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args.get("hub.challenge"), 200
-
         return "Token inválido", 403
 
     data = request.json or {}
 
-    print(
-        f"\n📩 {json.dumps(data, indent=2, ensure_ascii=False)}"
-    )
+    print(f"\n📩 {json.dumps(data, indent=2, ensure_ascii=False)}")
 
     try:
         value = data["entry"][0]["changes"][0]["value"]
@@ -1217,26 +1333,33 @@ def webhook():
         tipo = msg["type"]
 
         if tipo == "text":
-            procesar(
-                numero,
-                texto=msg["text"]["body"]
-            )
+            procesar(numero, texto=msg["text"].get("body", ""))
 
         elif tipo == "button":
+            boton = msg.get("button", {})
             procesar(
                 numero,
-                button_id=msg["button"].get("text", "")
+                button_id=boton.get("payload", ""),
+                button_text=boton.get("text", "")
             )
 
         elif tipo == "interactive":
-            inter = msg["interactive"]
+            inter = msg.get("interactive", {})
 
             if "button_reply" in inter:
+                reply = inter["button_reply"]
                 procesar(
                     numero,
-                    button_id=inter["button_reply"].get(
-                        "id", ""
-                    )
+                    button_id=reply.get("id", ""),
+                    button_text=reply.get("title", "")
+                )
+
+            elif "list_reply" in inter:
+                reply = inter["list_reply"]
+                procesar(
+                    numero,
+                    button_id=reply.get("id", ""),
+                    button_text=reply.get("title", "")
                 )
 
     except Exception as e:
@@ -1481,12 +1604,42 @@ def api_participantes():
 @app.route("/api/participantes", methods=["POST"])
 def api_crear_participante():
     if not autenticado():
-        return jsonify({"error":"No autorizado"}),401
-    d=request.json or {}
-    numero=normalizar_numero(d.get("telefono"))
-    if not numero: return jsonify({"ok":False,"error":"Teléfono no válido"}),400
-    p=asegurar_participante(numero)
-    return jsonify({"ok":True,"participante":p})
+        return jsonify({"error": "No autorizado"}), 401
+
+    d = request.json or {}
+    numero = normalizar_numero(d.get("telefono"))
+    if not numero:
+        return jsonify({"ok": False, "error": "Teléfono no válido"}), 400
+
+    existente = obtener_participante(numero)
+    if existente:
+        return jsonify({
+            "ok": True,
+            "participante": dict(existente),
+            "nuevo": False,
+            "bienvenida_enviada": False,
+            "mensaje": "El participante ya estaba registrado."
+        })
+
+    participante = asegurar_participante(numero)
+
+    try:
+        enviar_plantilla_nuevo_participante(numero)
+        return jsonify({
+            "ok": True,
+            "participante": dict(participante),
+            "nuevo": True,
+            "bienvenida_enviada": True
+        })
+    except Exception as ex:
+        print(f"⚠️ Participante creado pero no se pudo enviar bienvenida a {numero}: {ex}")
+        return jsonify({
+            "ok": False,
+            "participante": dict(participante),
+            "nuevo": True,
+            "bienvenida_enviada": False,
+            "error": f"Participante creado, pero no se pudo enviar la plantilla de bienvenida: {ex}"
+        }), 502
 
 @app.route("/api/participantes/importar", methods=["POST"])
 def api_importar_participantes():
