@@ -1245,7 +1245,10 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
         return
 
     if participante["estado"] == "BAJA":
-        if comando in ["AYUDA", "MENU", "OPCIONES"]:
+        if comando in ["SI", "SÍ", "ACEPTO"]:
+            activar_participante(numero)
+            enviar_texto(numero, "✅ ¡Gracias! Has vuelto a activar tu participación. Recibirás las próximas encuestas.")
+        elif comando in ["AYUDA", "MENU", "OPCIONES"]:
             enviar_texto(numero, "Estás dado de baja y no recibirás encuestas. Escribe ALTA para volver a participar.")
         else:
             enviar_texto(numero, "Estás dado de baja. Escribe ALTA si quieres volver a participar.")
@@ -1641,6 +1644,68 @@ def api_crear_participante():
             "error": f"Participante creado, pero no se pudo enviar la plantilla de bienvenida: {ex}"
         }), 502
 
+@app.route("/api/participantes/accion", methods=["POST"])
+def api_participante_accion():
+    """Acciones manuales del panel sobre un participante."""
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    d = request.json or {}
+    numero = normalizar_numero(d.get("telefono"))
+    accion = str(d.get("accion", "")).strip().lower()
+
+    if not numero:
+        return jsonify({"ok": False, "error": "Teléfono no válido"}), 400
+
+    participante = obtener_participante(numero)
+    if not participante:
+        return jsonify({"ok": False, "error": "Participante no encontrado"}), 404
+
+    try:
+        if accion == "bienvenida":
+            enviar_plantilla_nuevo_participante(numero)
+            return jsonify({
+                "ok": True,
+                "accion": "bienvenida",
+                "mensaje": "Plantilla de bienvenida enviada"
+            })
+
+        if accion == "baja":
+            dar_de_baja_participante(numero)
+            return jsonify({
+                "ok": True,
+                "accion": "baja",
+                "mensaje": "Participante dado de baja"
+            })
+
+        if accion == "eliminar":
+            # Eliminamos el registro de participante, pero NO los votos
+            # históricos ni los destinatarios de encuestas ya realizadas.
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM participantes WHERE telefono=%s RETURNING telefono",
+                        (numero,)
+                    )
+                    eliminado = cur.fetchone()
+                conn.commit()
+
+            if not eliminado:
+                return jsonify({"ok": False, "error": "Participante no encontrado"}), 404
+
+            return jsonify({
+                "ok": True,
+                "accion": "eliminar",
+                "mensaje": "Participante eliminado"
+            })
+
+        return jsonify({"ok": False, "error": "Acción no válida"}), 400
+
+    except Exception as ex:
+        print(f"⚠️ Error en acción de participante {numero}/{accion}: {ex}")
+        return jsonify({"ok": False, "error": str(ex)}), 502
+
+
 @app.route("/api/participantes/importar", methods=["POST"])
 def api_importar_participantes():
     if not autenticado(): return jsonify({"error":"No autorizado"}),401
@@ -1881,6 +1946,32 @@ def api_encuestas():
         x["estado_calculado"]=st
         salida.append(x)
     return jsonify({"encuestas":salida,"activa_id":next((x["id"] for x in salida if x["activa"]),None)})
+
+
+@app.route("/api/encuestas/<int:id_encuesta>", methods=["DELETE"])
+def api_eliminar_encuesta(id_encuesta):
+    if not autenticado():
+        return jsonify({"error": "No autorizado"}), 401
+
+    encuesta = obtener_encuesta(id_encuesta)
+    if not encuesta:
+        return jsonify({"ok": False, "error": "Encuesta no encontrada"}), 404
+
+    # No permitimos borrar una encuesta que está recogiendo respuestas.
+    if encuesta["activa"] or encuesta.get("estado") == "ACTIVA":
+        return jsonify({
+            "ok": False,
+            "error": "No puedes eliminar una encuesta activa. Ciérrala primero."
+        }), 400
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            # votos, estados_participantes y destinatarios_encuesta tienen
+            # ON DELETE CASCADE respecto a encuestas.
+            cur.execute("DELETE FROM encuestas WHERE id=%s", (id_encuesta,))
+        conn.commit()
+
+    return jsonify({"ok": True, "id": id_encuesta})
 
 
 @app.route("/api/encuestas/<int:id_encuesta>", methods=["GET"])
