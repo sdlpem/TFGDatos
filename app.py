@@ -2107,11 +2107,13 @@ def api_lanzar():
 
     for numero in numeros:
         try:
-            enviar_pregunta_encuesta(numero, encuesta_activa)
+            # Al lanzar una encuesta NO se envía todavía la primera pregunta.
+            # Primero se pide al participante que confirme si quiere participar.
+            enviar_invitacion_encuesta(numero)
             guardar_estado_participante_encuesta(
                 encuesta["id"],
                 numero,
-                "esperando_respuesta"
+                "invitacion_pendiente"
             )
             enviados += 1
         except Exception as ex:
