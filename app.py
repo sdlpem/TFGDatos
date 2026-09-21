@@ -27,7 +27,6 @@ RESULTADOS_URL = os.environ.get(
 )
 PLANTILLA_OPCIONES = os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
 PLANTILLA_NUEVO_PARTICIPANTE = os.environ.get("PLANTILLA_NUEVO_PARTICIPANTE", "nuevo_participante")
-PLANTILLA_CONSENTIMIENTO = os.environ.get("PLANTILLA_CONSENTIMIENTO", "plantilla_dinamica_botones")
 WHATSAPP_INVITACION_URL = "https://wa.me/34644052889"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
@@ -612,11 +611,11 @@ def enviar_encuesta_a_destinatarios(id_encuesta):
 
     for numero in numeros:
         try:
-            enviar_pregunta_encuesta(numero, encuesta)
+            enviar_invitacion_encuesta(numero)
             guardar_estado_participante_encuesta(
                 id_encuesta,
                 numero,
-                "esperando_respuesta"
+                "invitacion_pendiente"
             )
             enviados += 1
         except Exception as ex:
@@ -990,17 +989,8 @@ def _enviar_template(nombre, numero, componentes=None):
 
 
 def enviar_plantilla_nuevo_participante(numero):
-    """Envía la plantilla de bienvenida/consentimiento inicial."""
-    componentes = [{
-        "type": "body",
-        "parameters": [{
-            "type": "text",
-            "parameter_name": "pregunta",
-            "text": "¿Quieres participar en nuestras encuestas?"
-        }]
-    }]
-    return _enviar_template(PLANTILLA_CONSENTIMIENTO, numero, componentes)
-
+    """Envía la plantilla aprobada de bienvenida/consentimiento inicial."""
+    return _enviar_template(PLANTILLA_NUEVO_PARTICIPANTE, numero)
 
 def _opciones_con_letras(opciones):
     """Devuelve [(A, texto), (B, texto), ...] para las opciones de una encuesta."""
@@ -1111,6 +1101,23 @@ def enviar_lista(numero, texto, filas, titulo="Opciones"):
     print(f"📤 Lista → {numero}: {r.status_code} {r.text}")
     _respuesta_http_whatsapp(r, "mensaje interactivo con lista")
     return r.json() if r.content else {}
+
+
+def enviar_invitacion_encuesta(numero):
+    """Envía la invitación previa a una encuesta mediante botones interactivos.
+
+    Por ahora se envía como mensaje normal con botones. Cuando exista una
+    plantilla aprobada para esta invitación, esta función podrá sustituirse
+    por _enviar_template() sin cambiar el resto del flujo.
+    """
+    return enviar_botones(
+        numero,
+        "Hay una nueva encuesta disponible.\n¿Desea participar?",
+        [
+            ("ENCUESTA_SI", "Sí"),
+            ("ENCUESTA_NO", "No"),
+        ],
+    )
 
 
 def enviar_pregunta_encuesta(numero, encuesta):
@@ -1460,6 +1467,41 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
         return
 
     estado = cargar_estado_participante(numero)
+
+    # Invitación previa a la encuesta: el participante decide si empieza.
+    # La pregunta real solo se envía después de pulsar Sí.
+    if estado == "invitacion_pendiente":
+        if comando == "ENCUESTA_SI":
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "esperando_respuesta"
+            )
+            enviar_pregunta_encuesta(numero, encuesta)
+            return
+
+        if comando == "ENCUESTA_NO":
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "rechazada"
+            )
+            enviar_texto(numero, "De acuerdo. No participarás en esta encuesta.")
+            return
+
+        # Si el usuario escribe Sí/No manualmente en vez de pulsar el botón.
+        if comando in ["SI", "SÍ"]:
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "esperando_respuesta"
+            )
+            enviar_pregunta_encuesta(numero, encuesta)
+            return
+
+        if comando == "NO":
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "rechazada"
+            )
+            enviar_texto(numero, "De acuerdo. No participarás en esta encuesta.")
+            return
+
+        enviar_texto(numero, "Pulsa *Sí* para participar o *No* para rechazar la encuesta.")
+        return
 
     if comando == "ENCUESTA":
         guardar_estado_participante_encuesta(encuesta["id"], numero, "esperando_respuesta")
