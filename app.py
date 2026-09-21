@@ -27,6 +27,7 @@ RESULTADOS_URL = os.environ.get(
 )
 PLANTILLA_OPCIONES = os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
 PLANTILLA_NUEVO_PARTICIPANTE = os.environ.get("PLANTILLA_NUEVO_PARTICIPANTE", "nuevo_participante")
+PLANTILLA_CONSENTIMIENTO = os.environ.get("PLANTILLA_CONSENTIMIENTO", "plantilla_dinamica_botones")
 WHATSAPP_INVITACION_URL = "https://wa.me/34644052889"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
@@ -215,8 +216,7 @@ def _encuesta_dict(row):
             "plantilla_abierta": os.environ.get(
                 "PLANTILLA_ABIERTA", "plantilla_dinamica"
             ),
-            "plantilla_opciones": os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
-        }
+            }
 
     return {
         "id": row["id"],
@@ -238,8 +238,7 @@ def _encuesta_dict(row):
         ),
         "plantilla_abierta": os.environ.get(
             "PLANTILLA_ABIERTA", "plantilla_dinamica"
-        ),
-        "plantilla_opciones": os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
+        )
     }
 
 
@@ -613,7 +612,7 @@ def enviar_encuesta_a_destinatarios(id_encuesta):
 
     for numero in numeros:
         try:
-            enviar_plantilla(numero, encuesta)
+            enviar_pregunta_encuesta(numero, encuesta)
             guardar_estado_participante_encuesta(
                 id_encuesta,
                 numero,
@@ -991,8 +990,16 @@ def _enviar_template(nombre, numero, componentes=None):
 
 
 def enviar_plantilla_nuevo_participante(numero):
-    """Envía la plantilla aprobada de consentimiento inicial."""
-    return _enviar_template(PLANTILLA_NUEVO_PARTICIPANTE, numero)
+    """Envía la plantilla de bienvenida/consentimiento inicial."""
+    componentes = [{
+        "type": "body",
+        "parameters": [{
+            "type": "text",
+            "parameter_name": "pregunta",
+            "text": "¿Quieres participar en nuestras encuestas?"
+        }]
+    }]
+    return _enviar_template(PLANTILLA_CONSENTIMIENTO, numero, componentes)
 
 
 def _opciones_con_letras(opciones):
@@ -1006,77 +1013,174 @@ def _opciones_con_letras(opciones):
     return salida
 
 
-def _texto_opciones(encuesta):
-    """Texto que se inyecta en {{2}} de plantilla_opciones."""
-    pares = _opciones_con_letras(encuesta.get("opciones") or [])
-    if not pares:
-        return ""
-    return "\n".join(f"{letra}. {texto}" for letra, texto in pares)
+def enviar_botones(numero, texto, botones):
+    """
+    Envía un mensaje interactivo de WhatsApp con botones de respuesta.
+    Los botones no son una plantilla: se construyen directamente en la API.
+    WhatsApp admite hasta 3 botones de respuesta en este formato.
+    """
+    if not WA_TOKEN or not WA_PHONE_ID:
+        print(f"⚠️ Sin credenciales WhatsApp: {texto}")
+        return {}
+
+    botones = list(botones or [])[:3]
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": str(texto or "")
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": str(button_id),
+                            "title": str(titulo)[:20]
+                        }
+                    }
+                    for button_id, titulo in botones
+                ]
+            }
+        }
+    }
+
+    r = requests.post(
+        f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {WA_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=20
+    )
+
+    print(f"📤 Botones → {numero}: {r.status_code} {r.text}")
+    _respuesta_http_whatsapp(r, "mensaje interactivo con botones")
+    return r.json() if r.content else {}
+
+
+def enviar_lista(numero, texto, filas, titulo="Opciones"):
+    """
+    Envía una lista interactiva cuando hay más de 3 opciones.
+    No es una plantilla.
+    """
+    if not WA_TOKEN or not WA_PHONE_ID:
+        print(f"⚠️ Sin credenciales WhatsApp: {texto}")
+        return {}
+
+    filas = list(filas or [])[:10]
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {
+                "text": str(texto or "")
+            },
+            "action": {
+                "button": str(titulo)[:20],
+                "sections": [{
+                    "title": "Opciones",
+                    "rows": [
+                        {
+                            "id": str(row_id),
+                            "title": str(row_title)[:24]
+                        }
+                        for row_id, row_title in filas
+                    ]
+                }]
+            }
+        }
+    }
+
+    r = requests.post(
+        f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {WA_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=20
+    )
+
+    print(f"📤 Lista → {numero}: {r.status_code} {r.text}")
+    _respuesta_http_whatsapp(r, "mensaje interactivo con lista")
+    return r.json() if r.content else {}
+
+
+def enviar_pregunta_encuesta(numero, encuesta):
+    """
+    Envía la pregunta de la encuesta sin plantilla.
+    - SÍ/NO: botones interactivos.
+    - Opciones: botones hasta 3; lista si hay más.
+    - Número/porcentaje/abierta: texto normal.
+    """
+    tipo = encuesta.get("tipo", "sino")
+    pregunta = encuesta.get("texto", "").strip()
+
+    if tipo == "sino":
+        return enviar_botones(
+            numero,
+            pregunta,
+            [
+                ("SI", "Sí"),
+                ("NO", "No")
+            ]
+        )
+
+    if tipo == "opciones":
+        pares = _opciones_con_letras(encuesta.get("opciones") or [])
+
+        if not pares:
+            return enviar_texto(numero, pregunta)
+
+        if len(pares) <= 3:
+            return enviar_botones(
+                numero,
+                pregunta,
+                [(letra, f"{letra}. {opcion}") for letra, opcion in pares]
+            )
+
+        return enviar_lista(
+            numero,
+            pregunta,
+            [(letra, opcion) for letra, opcion in pares],
+            "Ver opciones"
+        )
+
+    if tipo == "porcentaje":
+        mn = encuesta.get("min", 0)
+        mx = encuesta.get("max", 100)
+        return enviar_texto(
+            numero,
+            f"{pregunta}\n\nResponde con un porcentaje entre {mn}% y {mx}%."
+        )
+
+    if tipo == "numero":
+        mn = encuesta.get("min")
+        mx = encuesta.get("max")
+        if mn is not None and mx is not None:
+            instruccion = f"Responde con un número entre {mn} y {mx}."
+        else:
+            instruccion = "Responde con un número."
+        return enviar_texto(numero, f"{pregunta}\n\n{instruccion}")
+
+    return enviar_texto(numero, pregunta)
 
 
 def enviar_plantilla(numero, encuesta):
-    """Envía la plantilla correspondiente al tipo de encuesta."""
-    tipo = encuesta.get("tipo", "sino")
+    """
+    Compatibilidad para el flujo antiguo.
+    Las encuestas ya NO usan plantillas.
+    La única plantilla que se mantiene por ahora es la de bienvenida.
+    """
+    return enviar_pregunta_encuesta(numero, encuesta)
 
-    if tipo == "sino":
-        nombre = encuesta.get(
-            "plantilla_sino",
-            os.environ.get("PLANTILLA_SINO", "plantilla_dinamica")
-        )
-        # Conservamos el formato de variables que ya usa la plantilla SÍ/NO actual.
-        componentes = [{
-            "type": "body",
-            "parameters": [{
-                "type": "text",
-                "parameter_name": "pregunta",
-                "text": encuesta.get("texto", "")
-            }]
-        }]
-
-    elif tipo == "opciones":
-        nombre = encuesta.get(
-            "plantilla_opciones",
-            os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
-        )
-        # Esta plantilla fue creada en Meta con variables numéricas {{1}} y {{2}}.
-        componentes = [{
-            "type": "body",
-            "parameters": [
-                {
-                    "type": "text",
-                    "text": encuesta.get("texto", "")
-                },
-                {
-                    "type": "text",
-                    "text": _texto_opciones(encuesta)
-                }
-            ]
-        }]
-
-    else:
-        nombre = encuesta.get(
-            "plantilla_abierta",
-            os.environ.get("PLANTILLA_ABIERTA", "plantilla_dinamica")
-        )
-        formato = formato_instrucciones(encuesta)
-        # Conservamos el formato de variables que ya usa la plantilla abierta actual.
-        componentes = [{
-            "type": "body",
-            "parameters": [
-                {
-                    "type": "text",
-                    "parameter_name": "pregunta",
-                    "text": encuesta.get("texto", "")
-                },
-                {
-                    "type": "text",
-                    "parameter_name": "formato_respuesta",
-                    "text": formato
-                }
-            ]
-        }]
-
-    return _enviar_template(nombre, numero, componentes)
 
 def enviar_confirmacion(numero, valor):
     """Mensaje enviado después de registrar un voto."""
@@ -1359,7 +1463,7 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
 
     if comando == "ENCUESTA":
         guardar_estado_participante_encuesta(encuesta["id"], numero, "esperando_respuesta")
-        enviar_plantilla(numero, encuesta)
+        enviar_pregunta_encuesta(numero, encuesta)
         return
 
     if comando == "CAMBIAR":
@@ -1367,7 +1471,7 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
             enviar_texto(numero, "Todavía no tienes una respuesta registrada. Escribe ENCUESTA para participar.")
             return
         guardar_estado_participante(numero, "esperando_cambio")
-        enviar_plantilla(numero, encuesta)
+        enviar_pregunta_encuesta(numero, encuesta)
         return
 
     if estado in ["esperando_respuesta", "esperando_cambio"] or comando == "ENCUESTA":
@@ -1961,7 +2065,7 @@ def api_lanzar():
 
     for numero in numeros:
         try:
-            enviar_plantilla(numero, encuesta_activa)
+            enviar_pregunta_encuesta(numero, encuesta_activa)
             guardar_estado_participante_encuesta(
                 encuesta["id"],
                 numero,
