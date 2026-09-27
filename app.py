@@ -57,14 +57,27 @@ def init_db():
                     tipo VARCHAR(30) NOT NULL DEFAULT 'sino',
                     minimo DOUBLE PRECISION,
                     maximo DOUBLE PRECISION,
+                    solo_enteros BOOLEAN NOT NULL DEFAULT FALSE,
                     cierre TIMESTAMP NULL,
                     activa BOOLEAN NOT NULL DEFAULT FALSE,
                     estado VARCHAR(30) NOT NULL DEFAULT 'BORRADOR',
                     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     fecha_lanzamiento TIMESTAMP NULL,
                     fecha_cierre_real TIMESTAMP NULL,
+                    resultados_enviados_at TIMESTAMP NULL,
                     destinatarios INTEGER NOT NULL DEFAULT 0
                 )
+            """)
+
+            # Compatibilidad con instalaciones PostgreSQL creadas antes de esta versión.
+            cur.execute("""
+                ALTER TABLE encuestas
+                ADD COLUMN IF NOT EXISTS resultados_enviados_at TIMESTAMP NULL
+            """)
+
+            cur.execute("""
+                ALTER TABLE encuestas
+                ADD COLUMN IF NOT EXISTS solo_enteros BOOLEAN NOT NULL DEFAULT FALSE
             """)
 
             cur.execute("""
@@ -202,6 +215,7 @@ def _encuesta_dict(row):
             "tipo": "sino",
             "min": None,
             "max": None,
+            "solo_enteros": False,
             "cierre": None,
             "activa": False,
             "estado": "SIN_CONFIGURAR",
@@ -223,6 +237,7 @@ def _encuesta_dict(row):
         "tipo": row["tipo"],
         "min": row["minimo"],
         "max": row["maximo"],
+        "solo_enteros": bool(row.get("solo_enteros", False)),
         "cierre": _fecha_iso(row["cierre"]),
         "activa": bool(row["activa"]),
         "estado": row["estado"],
@@ -284,14 +299,15 @@ def guardar_nueva_encuesta(d):
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO encuestas
-                    (texto, tipo, minimo, maximo, cierre, activa, estado, fecha_programada, opciones)
-                VALUES (%s, %s, %s, %s, %s, FALSE, 'BORRADOR', %s, %s)
+                    (texto, tipo, minimo, maximo, solo_enteros, cierre, activa, estado, fecha_programada, opciones)
+                VALUES (%s, %s, %s, %s, %s, %s, FALSE, 'BORRADOR', %s, %s)
                 RETURNING id
             """, (
                 d.get("texto", ""),
                 d.get("tipo", "sino"),
                 d.get("min"),
                 d.get("max"),
+                bool(d.get("solo_enteros", False)) if d.get("tipo", "sino") == "numero" else False,
                 _fecha_db(d.get("cierre")),
                 _fecha_db(d.get("fecha_programada")),
                 json.dumps(d.get("opciones") or [], ensure_ascii=False)
@@ -312,6 +328,7 @@ def actualizar_encuesta(id_encuesta, d):
                     tipo=%s,
                     minimo=%s,
                     maximo=%s,
+                    solo_enteros=%s,
                     cierre=%s,
                     fecha_programada=%s,
                     opciones=%s
@@ -321,6 +338,7 @@ def actualizar_encuesta(id_encuesta, d):
                 d.get("tipo", "sino"),
                 d.get("min"),
                 d.get("max"),
+                bool(d.get("solo_enteros", False)) if d.get("tipo", "sino") == "numero" else False,
                 _fecha_db(d.get("cierre")),
                 _fecha_db(d.get("fecha_programada")),
                 json.dumps(d.get("opciones") or [], ensure_ascii=False),
@@ -581,7 +599,8 @@ def activar_encuesta(id_encuesta):
                     estado='ACTIVA',
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
                     fecha_programada=NULL,
-                    fecha_cierre_real=NULL
+                    fecha_cierre_real=NULL,
+                    resultados_enviados_at=NULL
                 WHERE id=%s
             """, (id_encuesta,))
 
@@ -679,6 +698,67 @@ def procesar_programaciones():
 
         if errores:
             print(f"⚠️ Errores de envío: {errores}")
+
+    # Enviar los resultados al día siguiente de la apertura.
+    # Se usa un mensaje normal: el participante ha estado dentro de la
+    # ventana de 24 horas desde el inicio de la encuesta.
+    ahora_resultados = _ahora_local()
+    with db_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, fecha_lanzamiento
+                FROM encuestas
+                WHERE estado='CERRADA'
+                  AND fecha_lanzamiento IS NOT NULL
+                  AND fecha_lanzamiento + INTERVAL '1 day' <= %s
+                  AND resultados_enviados_at IS NULL
+                ORDER BY id ASC
+            """, (ahora_resultados,))
+            encuestas_resultados = cur.fetchall()
+
+    for row in encuestas_resultados:
+        encuesta_id = row["id"]
+
+        # Solo avisamos a quienes respondieron. Su último mensaje entrante
+        # pertenece a la propia encuesta, por lo que seguimos dentro de
+        # la ventana de atención de WhatsApp al día siguiente.
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT telefono
+                    FROM votos
+                    WHERE encuesta_id=%s
+                    ORDER BY telefono ASC
+                """, (encuesta_id,))
+                numeros = [fila[0] for fila in cur.fetchall()]
+
+        enviados_resultados = 0
+        errores_resultados = []
+
+        for numero in numeros:
+            try:
+                enviar_texto(
+                    numero,
+                    f"📊 Ya puedes consultar los resultados de la encuesta:\n{RESULTADOS_URL}?id={encuesta_id}"
+                )
+                enviados_resultados += 1
+            except Exception as ex:
+                errores_resultados.append({"numero": numero, "error": str(ex)})
+
+        # Marcamos el envío como procesado para no repetirlo en el siguiente minuto.
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE encuestas
+                    SET resultados_enviados_at=CURRENT_TIMESTAMP
+                    WHERE id=%s AND resultados_enviados_at IS NULL
+                """, (encuesta_id,))
+            conn.commit()
+
+        print(
+            f"📊 Resultados encuesta #{encuesta_id}: "
+            f"enviados={enviados_resultados}, errores={len(errores_resultados)}"
+        )
 
 
 _scheduler_iniciado = False
@@ -1159,10 +1239,11 @@ def enviar_pregunta_encuesta(numero, encuesta):
     if tipo == "numero":
         mn = encuesta.get("min")
         mx = encuesta.get("max")
+        unidad = "número entero" if encuesta.get("solo_enteros") else "número"
         if mn is not None and mx is not None:
-            instruccion = f"Responde con un número entre {mn} y {mx}."
+            instruccion = f"Responde con un {unidad} entre {mn} y {mx}."
         else:
-            instruccion = "Responde con un número."
+            instruccion = f"Responde con un {unidad}."
         return enviar_texto(numero, f"{pregunta}\n\n{instruccion}")
 
     return enviar_texto(numero, pregunta)
@@ -1184,8 +1265,9 @@ def enviar_confirmacion(numero, valor):
 
     texto = (
         f"✅ Tu respuesta *{valor}* ha sido registrada.\n\n"
-        f"Escribe *CAMBIAR* en cualquier momento para modificarla.\n\n"
-        f"📊 Puedes consultar los resultados aquí:\n{RESULTADOS_URL}"
+        "Gracias por participar. 🙌\n\n"
+        "Los resultados estarán disponibles al día siguiente.\n"
+        "Si quieres modificar tu respuesta, escribe *CAMBIAR*."
     )
 
     enviar_texto(numero, texto)
@@ -1228,14 +1310,30 @@ def validar(texto, encuesta):
 
     if tipo == "numero":
         try:
-            v = float(texto.replace(",", "."))
+            valor_normalizado = texto.replace(" ", "").replace(",", ".")
+
+            # Si la pregunta exige enteros, rechazamos cualquier decimal
+            # aunque matemáticamente sea equivalente a un entero (p. ej. 10.0).
+            if encuesta.get("solo_enteros"):
+                if not re.fullmatch(r"[+-]?\d+", valor_normalizado):
+                    return False, None
+                v = int(valor_normalizado)
+            else:
+                v = float(valor_normalizado)
+
             mn = encuesta.get("min")
             mx = encuesta.get("max")
             if mn is not None and v < mn:
                 return False, None
             if mx is not None and v > mx:
                 return False, None
-            return True, str(v)
+
+            if encuesta.get("solo_enteros"):
+                return True, str(v)
+
+            if v.is_integer():
+                return True, str(int(v))
+            return True, format(v, ".15g")
         except Exception:
             return False, None
 
@@ -1264,9 +1362,10 @@ def formato_instrucciones(encuesta):
     if tipo == "numero":
         mn = encuesta.get("min")
         mx = encuesta.get("max")
+        unidad = "un número entero" if encuesta.get("solo_enteros") else "un número"
         if mn is not None and mx is not None:
-            return f"con un número entre {mn} y {mx}"
-        return "con un número"
+            return f"con {unidad} entre {mn} y {mx}"
+        return f"con {unidad}"
 
     if tipo == "opciones":
         pares = _opciones_con_letras(encuesta.get("opciones") or [])
@@ -2026,6 +2125,7 @@ def api_lanzar():
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
                     fecha_programada=NULL,
                     fecha_cierre_real=NULL,
+                    resultados_enviados_at=NULL,
                     destinatarios=%s
                 WHERE id=%s
             """, (len(numeros), encuesta["id"]))
@@ -2433,6 +2533,28 @@ def api_resultados():
     if not encuesta.get("id"):
         return jsonify({"pregunta":"","tipo":"sino","cierre":None,"activa":False,"estado":"SIN_CONFIGURAR","total":0,"conteo":{},"destinatarios":0,"encuesta_id":None})
 
+    # Los resultados públicos solo se habilitan al día siguiente del lanzamiento.
+    fecha_lanzamiento = _fecha_db(encuesta.get("fecha_lanzamiento"))
+    ahora = _ahora_local()
+    resultados_disponibles = (
+        bool(fecha_lanzamiento)
+        and ahora >= fecha_lanzamiento + timedelta(days=1)
+    )
+
+    if not resultados_disponibles:
+        return jsonify({
+            "pregunta": encuesta.get("texto", ""),
+            "tipo": encuesta.get("tipo", "sino"),
+            "cierre": encuesta.get("cierre"),
+            "activa": bool(encuesta.get("activa")),
+            "estado": encuesta.get("estado", "BORRADOR"),
+            "resultados_disponibles": False,
+            "total": 0,
+            "conteo": {},
+            "destinatarios": encuesta.get("destinatarios", 0),
+            "encuesta_id": encuesta["id"]
+        })
+
     r=resumen_votos(encuesta["id"])
     return jsonify({
         "pregunta":encuesta.get("texto",""),
@@ -2440,6 +2562,7 @@ def api_resultados():
         "cierre":encuesta.get("cierre"),
         "activa":bool(encuesta.get("activa")),
         "estado":"ACTIVA" if encuesta.get("activa") else encuesta.get("estado","BORRADOR"),
+        "resultados_disponibles":True,
         "total":r["total"],"conteo":r["conteo"],
         "destinatarios":encuesta.get("destinatarios",0),
         "encuesta_id":encuesta["id"]
