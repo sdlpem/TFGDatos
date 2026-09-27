@@ -1289,7 +1289,6 @@ def enviar_confirmacion(numero, valor):
     texto = (
         f"✅ Tu respuesta *{valor}* ha sido registrada.\n\n"
         f"Escribe *CAMBIAR* en cualquier momento para modificarla.\n\n"
-        f"📊 Ve cómo están votando los demás:\n{RESULTADOS_URL}"
     )
 
     enviar_texto(numero, texto)
