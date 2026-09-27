@@ -25,8 +25,8 @@ RESULTADOS_URL = os.environ.get(
     "RESULTADOS_URL",
     "https://tfgdatos.onrender.com/resultados"
 )
+PLANTILLA_OPCIONES = os.environ.get("PLANTILLA_OPCIONES", "plantilla_opciones")
 PLANTILLA_NUEVO_PARTICIPANTE = os.environ.get("PLANTILLA_NUEVO_PARTICIPANTE", "nuevo_participante")
-PLANTILLA_PREGUNTA_NUEVA = os.environ.get("PLANTILLA_PREGUNTA_NUEVA", "pregunta_nueva")
 WHATSAPP_INVITACION_URL = "https://wa.me/34644052889"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
@@ -57,27 +57,14 @@ def init_db():
                     tipo VARCHAR(30) NOT NULL DEFAULT 'sino',
                     minimo DOUBLE PRECISION,
                     maximo DOUBLE PRECISION,
-                    solo_enteros BOOLEAN NOT NULL DEFAULT FALSE,
                     cierre TIMESTAMP NULL,
                     activa BOOLEAN NOT NULL DEFAULT FALSE,
                     estado VARCHAR(30) NOT NULL DEFAULT 'BORRADOR',
                     fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     fecha_lanzamiento TIMESTAMP NULL,
                     fecha_cierre_real TIMESTAMP NULL,
-                    resultados_enviados_at TIMESTAMP NULL,
                     destinatarios INTEGER NOT NULL DEFAULT 0
                 )
-            """)
-
-            # Compatibilidad con instalaciones PostgreSQL creadas antes de esta versión.
-            cur.execute("""
-                ALTER TABLE encuestas
-                ADD COLUMN IF NOT EXISTS resultados_enviados_at TIMESTAMP NULL
-            """)
-
-            cur.execute("""
-                ALTER TABLE encuestas
-                ADD COLUMN IF NOT EXISTS solo_enteros BOOLEAN NOT NULL DEFAULT FALSE
             """)
 
             cur.execute("""
@@ -113,6 +100,12 @@ def init_db():
             cur.execute("""
                 ALTER TABLE encuestas
                 ADD COLUMN IF NOT EXISTS opciones TEXT NULL
+            """)
+
+            # Control de envío de resultados al cerrar la encuesta.
+            cur.execute("""
+                ALTER TABLE encuestas
+                ADD COLUMN IF NOT EXISTS resultados_enviados_at TIMESTAMP NULL
             """)
 
             # Teléfonos asociados a una encuesta, necesarios para poder
@@ -215,7 +208,6 @@ def _encuesta_dict(row):
             "tipo": "sino",
             "min": None,
             "max": None,
-            "solo_enteros": False,
             "cierre": None,
             "activa": False,
             "estado": "SIN_CONFIGURAR",
@@ -237,7 +229,6 @@ def _encuesta_dict(row):
         "tipo": row["tipo"],
         "min": row["minimo"],
         "max": row["maximo"],
-        "solo_enteros": bool(row.get("solo_enteros", False)),
         "cierre": _fecha_iso(row["cierre"]),
         "activa": bool(row["activa"]),
         "estado": row["estado"],
@@ -299,15 +290,14 @@ def guardar_nueva_encuesta(d):
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO encuestas
-                    (texto, tipo, minimo, maximo, solo_enteros, cierre, activa, estado, fecha_programada, opciones)
-                VALUES (%s, %s, %s, %s, %s, %s, FALSE, 'BORRADOR', %s, %s)
+                    (texto, tipo, minimo, maximo, cierre, activa, estado, fecha_programada, opciones)
+                VALUES (%s, %s, %s, %s, %s, FALSE, 'BORRADOR', %s, %s)
                 RETURNING id
             """, (
                 d.get("texto", ""),
                 d.get("tipo", "sino"),
                 d.get("min"),
                 d.get("max"),
-                bool(d.get("solo_enteros", False)) if d.get("tipo", "sino") == "numero" else False,
                 _fecha_db(d.get("cierre")),
                 _fecha_db(d.get("fecha_programada")),
                 json.dumps(d.get("opciones") or [], ensure_ascii=False)
@@ -328,7 +318,6 @@ def actualizar_encuesta(id_encuesta, d):
                     tipo=%s,
                     minimo=%s,
                     maximo=%s,
-                    solo_enteros=%s,
                     cierre=%s,
                     fecha_programada=%s,
                     opciones=%s
@@ -338,7 +327,6 @@ def actualizar_encuesta(id_encuesta, d):
                 d.get("tipo", "sino"),
                 d.get("min"),
                 d.get("max"),
-                bool(d.get("solo_enteros", False)) if d.get("tipo", "sino") == "numero" else False,
                 _fecha_db(d.get("cierre")),
                 _fecha_db(d.get("fecha_programada")),
                 json.dumps(d.get("opciones") or [], ensure_ascii=False),
@@ -599,8 +587,7 @@ def activar_encuesta(id_encuesta):
                     estado='ACTIVA',
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
                     fecha_programada=NULL,
-                    fecha_cierre_real=NULL,
-                    resultados_enviados_at=NULL
+                    fecha_cierre_real=NULL
                 WHERE id=%s
             """, (id_encuesta,))
 
@@ -630,11 +617,11 @@ def enviar_encuesta_a_destinatarios(id_encuesta):
 
     for numero in numeros:
         try:
-            enviar_plantilla_pregunta_nueva(numero)
+            enviar_invitacion_encuesta(numero)
             guardar_estado_participante_encuesta(
                 id_encuesta,
                 numero,
-                "inicio_pendiente"
+                "invitacion_pendiente"
             )
             enviados += 1
         except Exception as ex:
@@ -646,6 +633,71 @@ def enviar_encuesta_a_destinatarios(id_encuesta):
     return enviados, errores
 
 
+def enviar_resultados_encuesta(id_encuesta):
+    """Envía el enlace de resultados a todos los participantes que votaron.
+
+    Solo marca la encuesta como enviada cuando todos los envíos realizados
+    terminan correctamente. Si algún envío falla, devuelve False para permitir
+    un reintento posterior.
+    """
+    encuesta = obtener_encuesta(id_encuesta)
+    if not encuesta:
+        return False
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT telefono
+                FROM votos
+                WHERE encuesta_id=%s
+                ORDER BY telefono
+            """, (id_encuesta,))
+            telefonos = [row[0] for row in cur.fetchall()]
+
+    if not telefonos:
+        # No hay destinatarios que notificar, pero dejamos constancia de que
+        # el proceso de resultados ya se ha resuelto para esta encuesta.
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE encuestas
+                    SET resultados_enviados_at=CURRENT_TIMESTAMP
+                    WHERE id=%s AND resultados_enviados_at IS NULL
+                """, (id_encuesta,))
+            conn.commit()
+        print(f"📊 Encuesta #{id_encuesta}: no hay votos; resultados marcados como procesados")
+        return True
+
+    url = f"{RESULTADOS_URL}?id={id_encuesta}"
+    errores = []
+
+    for numero in telefonos:
+        try:
+            enviar_texto(
+                numero,
+                "📊 La encuesta ha finalizado.\n\n"
+                f"Puedes consultar los resultados aquí:\n{url}"
+            )
+        except Exception as ex:
+            errores.append({"numero": numero, "error": str(ex)})
+
+    if errores:
+        print(f"⚠️ Resultados encuesta #{id_encuesta}: {len(errores)} errores de envío: {errores}")
+        return False
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encuestas
+                SET resultados_enviados_at=CURRENT_TIMESTAMP
+                WHERE id=%s AND resultados_enviados_at IS NULL
+            """, (id_encuesta,))
+        conn.commit()
+
+    print(f"📊 Resultados de encuesta #{id_encuesta} enviados a {len(telefonos)} participantes")
+    return True
+
+
 def procesar_programaciones():
     """
     Comprueba las encuestas programadas y las activa/cierra cuando toca.
@@ -654,6 +706,7 @@ def procesar_programaciones():
     ahora = _ahora_local()
 
     # Cerrar encuestas activas cuya hora de cierre haya pasado.
+    encuestas_cerradas = []
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -664,8 +717,28 @@ def procesar_programaciones():
                 WHERE activa=TRUE
                   AND cierre IS NOT NULL
                   AND cierre <= %s
+                RETURNING id
             """, (ahora,))
+            encuestas_cerradas = [row[0] for row in cur.fetchall()]
         conn.commit()
+
+    for id_encuesta in encuestas_cerradas:
+        enviar_resultados_encuesta(id_encuesta)
+
+    # Reintenta resultados de encuestas ya cerradas cuyo envío no terminó bien.
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM encuestas
+                WHERE estado='CERRADA'
+                  AND resultados_enviados_at IS NULL
+                  AND id <> ALL(%s)
+            """, (encuestas_cerradas or [-1],))
+            pendientes_resultados = [row[0] for row in cur.fetchall()]
+
+    for id_encuesta in pendientes_resultados:
+        enviar_resultados_encuesta(id_encuesta)
 
     # Obtener encuestas que ya deben lanzarse.
     with db_conn() as conn:
@@ -698,67 +771,6 @@ def procesar_programaciones():
 
         if errores:
             print(f"⚠️ Errores de envío: {errores}")
-
-    # Enviar los resultados al día siguiente de la apertura.
-    # Se usa un mensaje normal: el participante ha estado dentro de la
-    # ventana de 24 horas desde el inicio de la encuesta.
-    ahora_resultados = _ahora_local()
-    with db_conn() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("""
-                SELECT id, fecha_lanzamiento
-                FROM encuestas
-                WHERE estado='CERRADA'
-                  AND fecha_lanzamiento IS NOT NULL
-                  AND fecha_lanzamiento + INTERVAL '1 day' <= %s
-                  AND resultados_enviados_at IS NULL
-                ORDER BY id ASC
-            """, (ahora_resultados,))
-            encuestas_resultados = cur.fetchall()
-
-    for row in encuestas_resultados:
-        encuesta_id = row["id"]
-
-        # Solo avisamos a quienes respondieron. Su último mensaje entrante
-        # pertenece a la propia encuesta, por lo que seguimos dentro de
-        # la ventana de atención de WhatsApp al día siguiente.
-        with db_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT DISTINCT telefono
-                    FROM votos
-                    WHERE encuesta_id=%s
-                    ORDER BY telefono ASC
-                """, (encuesta_id,))
-                numeros = [fila[0] for fila in cur.fetchall()]
-
-        enviados_resultados = 0
-        errores_resultados = []
-
-        for numero in numeros:
-            try:
-                enviar_texto(
-                    numero,
-                    f"📊 Ya puedes consultar los resultados de la encuesta:\n{RESULTADOS_URL}?id={encuesta_id}"
-                )
-                enviados_resultados += 1
-            except Exception as ex:
-                errores_resultados.append({"numero": numero, "error": str(ex)})
-
-        # Marcamos el envío como procesado para no repetirlo en el siguiente minuto.
-        with db_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE encuestas
-                    SET resultados_enviados_at=CURRENT_TIMESTAMP
-                    WHERE id=%s AND resultados_enviados_at IS NULL
-                """, (encuesta_id,))
-            conn.commit()
-
-        print(
-            f"📊 Resultados encuesta #{encuesta_id}: "
-            f"enviados={enviados_resultados}, errores={len(errores_resultados)}"
-        )
 
 
 _scheduler_iniciado = False
@@ -999,9 +1011,6 @@ except Exception as ex:
     print(f"❌ Error conectando con PostgreSQL: {ex}")
     raise
 
-# Arranque del programador de encuestas.
-iniciar_scheduler()
-
 
 # ============================================================
 # WHATSAPP — ENVÍO
@@ -1023,10 +1032,13 @@ def enviar_texto(numero, texto):
             "to": numero,
             "type": "text",
             "text": {"body": texto}
-        }
+        },
+        timeout=20
     )
 
     print(f"📤 Texto {numero}: {r.status_code} {r.text}")
+    _respuesta_http_whatsapp(r, "mensaje de texto")
+    return r.json() if r.content else {}
 
 
 def _respuesta_http_whatsapp(response, contexto):
@@ -1071,11 +1083,6 @@ def _enviar_template(nombre, numero, componentes=None):
 def enviar_plantilla_nuevo_participante(numero):
     """Envía la plantilla aprobada de bienvenida/consentimiento inicial."""
     return _enviar_template(PLANTILLA_NUEVO_PARTICIPANTE, numero)
-
-
-def enviar_plantilla_pregunta_nueva(numero):
-    """Envía la plantilla que inicia la conversación de una nueva encuesta."""
-    return _enviar_template(PLANTILLA_PREGUNTA_NUEVA, numero)
 
 def _opciones_con_letras(opciones):
     """Devuelve [(A, texto), (B, texto), ...] para las opciones de una encuesta."""
@@ -1188,6 +1195,23 @@ def enviar_lista(numero, texto, filas, titulo="Opciones"):
     return r.json() if r.content else {}
 
 
+def enviar_invitacion_encuesta(numero):
+    """Envía la invitación previa a una encuesta mediante botones interactivos.
+
+    Por ahora se envía como mensaje normal con botones. Cuando exista una
+    plantilla aprobada para esta invitación, esta función podrá sustituirse
+    por _enviar_template() sin cambiar el resto del flujo.
+    """
+    return enviar_botones(
+        numero,
+        "Hay una nueva encuesta disponible.\n¿Desea participar?",
+        [
+            ("ENCUESTA_SI", "Sí"),
+            ("ENCUESTA_NO", "No"),
+        ],
+    )
+
+
 def enviar_pregunta_encuesta(numero, encuesta):
     """
     Envía la pregunta de la encuesta sin plantilla.
@@ -1239,11 +1263,10 @@ def enviar_pregunta_encuesta(numero, encuesta):
     if tipo == "numero":
         mn = encuesta.get("min")
         mx = encuesta.get("max")
-        unidad = "número entero" if encuesta.get("solo_enteros") else "número"
         if mn is not None and mx is not None:
-            instruccion = f"Responde con un {unidad} entre {mn} y {mx}."
+            instruccion = f"Responde con un número entre {mn} y {mx}."
         else:
-            instruccion = f"Responde con un {unidad}."
+            instruccion = "Responde con un número."
         return enviar_texto(numero, f"{pregunta}\n\n{instruccion}")
 
     return enviar_texto(numero, pregunta)
@@ -1265,9 +1288,8 @@ def enviar_confirmacion(numero, valor):
 
     texto = (
         f"✅ Tu respuesta *{valor}* ha sido registrada.\n\n"
-        "Gracias por participar. 🙌\n\n"
-        "Los resultados estarán disponibles al día siguiente.\n"
-        "Si quieres modificar tu respuesta, escribe *CAMBIAR*."
+        f"Escribe *CAMBIAR* en cualquier momento para modificarla.\n\n"
+        f"📊 Ve cómo están votando los demás:\n{RESULTADOS_URL}"
     )
 
     enviar_texto(numero, texto)
@@ -1310,30 +1332,14 @@ def validar(texto, encuesta):
 
     if tipo == "numero":
         try:
-            valor_normalizado = texto.replace(" ", "").replace(",", ".")
-
-            # Si la pregunta exige enteros, rechazamos cualquier decimal
-            # aunque matemáticamente sea equivalente a un entero (p. ej. 10.0).
-            if encuesta.get("solo_enteros"):
-                if not re.fullmatch(r"[+-]?\d+", valor_normalizado):
-                    return False, None
-                v = int(valor_normalizado)
-            else:
-                v = float(valor_normalizado)
-
+            v = float(texto.replace(",", "."))
             mn = encuesta.get("min")
             mx = encuesta.get("max")
             if mn is not None and v < mn:
                 return False, None
             if mx is not None and v > mx:
                 return False, None
-
-            if encuesta.get("solo_enteros"):
-                return True, str(v)
-
-            if v.is_integer():
-                return True, str(int(v))
-            return True, format(v, ".15g")
+            return True, str(v)
         except Exception:
             return False, None
 
@@ -1362,10 +1368,9 @@ def formato_instrucciones(encuesta):
     if tipo == "numero":
         mn = encuesta.get("min")
         mx = encuesta.get("max")
-        unidad = "un número entero" if encuesta.get("solo_enteros") else "un número"
         if mn is not None and mx is not None:
-            return f"con {unidad} entre {mn} y {mx}"
-        return f"con {unidad}"
+            return f"con un número entre {mn} y {mx}"
+        return "con un número"
 
     if tipo == "opciones":
         pares = _opciones_con_letras(encuesta.get("opciones") or [])
@@ -1381,7 +1386,7 @@ def formato_instrucciones(encuesta):
 # ============================================================
 
 def enviar_ayuda(numero):
-    enviar_texto(numero, "ℹ️ Opciones disponibles:\n\nINVITAR — invitar a otra persona a participar\nCAMBIAR — modificar tu respuesta\nBAJA — dejar de recibir encuestas\nAYUDA — ver este menú")
+    enviar_texto(numero, "ℹ️ Opciones disponibles:\n\nENCUESTA — participar en la encuesta activa\nRESULTADOS — ver resultados\nINVITAR — obtener tu código de invitación\nCAMBIAR — modificar tu respuesta\nBAJA — dejar de recibir encuestas\nAYUDA — ver este menú")
 
 def procesar(numero, texto=None, button_id=None, button_text=None):
     numero = normalizar_numero(numero)
@@ -1389,48 +1394,35 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
         return
 
     participante = asegurar_participante(numero)
+
+    # Para botones de WhatsApp usamos el título visible como texto principal.
+    # Si Meta no lo incluye, usamos el ID del botón como alternativa.
     texto_limpio = (texto or button_text or button_id or "").strip()
     comando = texto_limpio.upper()
-    codigo = re.sub(r"\s+", "", texto_limpio).upper()
 
-    # --------------------------------------------------------
-    # ALTA: primero consentimiento; después, código obligatorio
-    # --------------------------------------------------------
-    if participante["estado"] == "NUEVO" and participante.get("flujo") != "ESPERANDO_INVITACION":
-        if comando in ["SI", "SÍ", "ACEPTO"]:
+    # El código de invitación ya NO se introduce con un comando especial.
+    # Se solicita únicamente durante la primera alta, después de aceptar la bienvenida.
+
+    # Primera alta: después de pulsar SÍ, pedimos el código de invitación.
+    if participante["estado"] == "ACTIVO" and participante.get("flujo") == "ESPERANDO_INVITACION":
+        if comando == "NO":
             with db_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE participantes SET flujo='ESPERANDO_INVITACION' WHERE telefono=%s",
+                        "UPDATE participantes SET flujo=NULL WHERE telefono=%s",
                         (numero,)
                     )
                 conn.commit()
-
             enviar_texto(
                 numero,
-                "Perfecto. Para completar tu registro necesitas un código de invitación.\n\n"
-                "Introduce el código que te ha proporcionado la persona que te ha invitado."
+                "✅ ¡Perfecto! Ya estás registrado como participante.\n\n"
+                "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
+                "Escribe AYUDA para ver las opciones."
             )
             return
 
-        if comando in ["NO", "NO GRACIAS"]:
-            dar_de_baja_participante(numero)
-            enviar_texto(
-                numero,
-                "De acuerdo. No recibirás encuestas. Si quieres participar en el futuro, "
-                "puedes volver a registrarte desde un enlace de invitación."
-            )
-            return
-
-        enviar_texto(
-            numero,
-            "👋 Para registrarte, primero debes aceptar la invitación pulsando *Sí* "
-            "en la plantilla de bienvenida."
-        )
-        return
-
-    # Código obligatorio. No existe una vía de alta sin código.
-    if participante.get("flujo") == "ESPERANDO_INVITACION":
+        # Admitimos el código directamente, con o sin espacios.
+        codigo = re.sub(r"\s+", "", texto_limpio).upper()
         if re.fullmatch(r"[A-F0-9]{8}", codigo):
             with db_conn() as conn:
                 with conn.cursor() as cur:
@@ -1443,13 +1435,7 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
                     if row and row[0] != participante["id"]:
                         cur.execute(
                             """UPDATE participantes
-                               SET estado='ACTIVO',
-                                   consentimiento=TRUE,
-                                   fecha_alta=CURRENT_TIMESTAMP,
-                                   fecha_baja=NULL,
-                                   primera_alta_at=COALESCE(primera_alta_at, CURRENT_TIMESTAMP),
-                                   invitado_por=%s,
-                                   flujo=NULL
+                               SET invitado_por=%s, flujo=NULL
                                WHERE telefono=%s""",
                             (row[0], numero)
                         )
@@ -1461,57 +1447,110 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
             if valido:
                 enviar_texto(
                     numero,
-                    "✅ Registro completado correctamente.\n\n"
-                    "Cuando haya una nueva encuesta recibirás un mensaje por aquí."
+                    "✅ ¡Perfecto! Tu código de invitación es válido y tu registro ha quedado completado.\n\n"
+                    "Cuando haya una encuesta activa recibirás la pregunta por aquí. "
+                    "Escribe AYUDA para ver las opciones."
                 )
             else:
                 enviar_texto(
                     numero,
-                    "❌ Ese código de invitación no es válido. Comprueba el código y vuelve a introducirlo."
+                    "❌ Ese código de invitación no es válido. Comprueba el código y vuelve a introducirlo, "
+                    "o responde *NO* si no tienes código."
                 )
             return
 
         enviar_texto(
             numero,
-            "❌ El código no tiene un formato válido.\n\n"
-            "Introduce el código de invitación de 8 caracteres que te ha proporcionado otro participante."
+            "No he reconocido ese código. Introduce el código de invitación de 8 caracteres, "
+            "o responde *NO* si no tienes código."
         )
         return
 
-    # --------------------------------------------------------
-    # PARTICIPANTE DADO DE BAJA
-    # --------------------------------------------------------
-    if participante["estado"] == "BAJA":
-        if comando == "AYUDA":
-            enviar_ayuda(numero)
+    # Primera alta: el SÍ de la plantilla de bienvenida activa al participante
+    # y abre el paso opcional del código. Una reactivación posterior no entra aquí.
+    if participante["estado"] == "NUEVO":
+        if comando in ["SI", "SÍ", "ACEPTO", "QUIERO PARTICIPAR"]:
+            p = activar_participante(numero)
+
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE participantes SET flujo='ESPERANDO_INVITACION' WHERE telefono=%s AND primera_alta_at IS NOT NULL",
+                        (numero,)
+                    )
+                conn.commit()
+
+            enviar_texto(
+                numero,
+                "✅ ¡Gracias por participar!\n\n"
+                "¿Tienes algún código de invitación?\n\n"
+                "Si alguien te ha invitado, introduce ahora su código.\n"
+                "Si no tienes ninguno, responde *NO*."
+            )
+        elif comando in ["NO", "NO GRACIAS"]:
+            dar_de_baja_participante(numero)
+            enviar_texto(
+                numero,
+                "De acuerdo. No recibirás encuestas. Si quieres participar en el futuro, "
+                "escribe ALTA."
+            )
         else:
             enviar_texto(
                 numero,
-                "Estás dado de baja y no recibirás encuestas.\n\n"
-                "Si quieres volver a participar, necesitas registrarte de nuevo mediante una invitación."
+                "👋 ¡Hola! Este es el canal de participación en las encuestas.\n\n"
+                "¿Quieres participar? Pulsa *Sí* o *No* en la plantilla de bienvenida."
             )
         return
 
-    # --------------------------------------------------------
-    # ÚNICOS COMANDOS: INVITAR, CAMBIAR, BAJA, AYUDA
-    # --------------------------------------------------------
+    # BAJA / ALTA son comandos globales.
     if comando == "BAJA":
         dar_de_baja_participante(numero)
-        enviar_texto(numero, "👋 Te has dado de baja correctamente. No recibirás nuevas encuestas.")
+        enviar_texto(
+            numero,
+            "👋 Te has dado de baja correctamente. No recibirás nuevas encuestas. "
+            "Puedes volver cuando quieras escribiendo ALTA."
+        )
         return
 
-    if comando == "AYUDA":
+    if comando == "ALTA":
+        activar_participante(numero)
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE participantes SET flujo=NULL WHERE telefono=%s", (numero,))
+            conn.commit()
+        enviar_texto(numero, "✅ Has vuelto a activar tu participación. Recibirás las próximas encuestas.")
+        return
+
+    if participante["estado"] == "BAJA":
+        if comando in ["SI", "SÍ", "ACEPTO"]:
+            activar_participante(numero)
+            enviar_texto(numero, "✅ ¡Gracias! Has vuelto a activar tu participación. Recibirás las próximas encuestas.")
+        elif comando in ["AYUDA", "MENU", "OPCIONES"]:
+            enviar_texto(numero, "Estás dado de baja y no recibirás encuestas. Escribe ALTA para volver a participar.")
+        else:
+            enviar_texto(numero, "Estás dado de baja. Escribe ALTA si quieres volver a participar.")
+        return
+
+    if comando in ["AYUDA", "MENU", "OPCIONES"]:
         enviar_ayuda(numero)
+        return
+
+    if comando == "RESULTADOS":
+        enviar_texto(numero, f"📊 Consulta los resultados aquí:\n{RESULTADOS_URL}")
         return
 
     if comando == "INVITAR":
         mensaje_invitacion = (
             "👋 ¡Hola! Estoy participando en un proyecto de encuestas y puedes participar tú también.\n\n"
             f"👉 Únete aquí: {WHATSAPP_INVITACION_URL}\n\n"
-            f"Mi código de invitación es: *{participante['codigo_invitacion']}*\n\n"
-            "Cuando recibas la bienvenida, pulsa *Sí* y después introduce este código."
+            "Cuando te registres, el sistema te preguntará si tienes un código de invitación. "
+            f"Introduce este código: *{participante['codigo_invitacion']}*\n\n"
+            "¡Gracias por participar!"
         )
-        enviar_texto(numero, "👥 *Mensaje para reenviar:*\n\n" + mensaje_invitacion)
+        enviar_texto(
+            numero,
+            "👥 *Mensaje para reenviar:*\n\n" + mensaje_invitacion
+        )
         return
 
     encuesta = cargar_encuesta_activa()
@@ -1521,43 +1560,56 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
 
     estado = cargar_estado_participante(numero)
 
-    # --------------------------------------------------------
-    # INICIO DE ENCUESTA
-    # pregunta_nueva abre la conversación. El botón "Vamos allá"
-    # desencadena el envío de la pregunta real.
-    # --------------------------------------------------------
-    if estado == "inicio_pendiente":
-        if (
-            comando in ["VAMOS ALLA", "VAMOS ALLÁ"]
-            or str(button_id or "").upper() in ["VAMOS_ALLA", "VAMOS ALLÁ"]
-        ):
+    # Invitación previa a la encuesta: el participante decide si empieza.
+    # La pregunta real solo se envía después de pulsar Sí.
+    if estado == "invitacion_pendiente":
+        if comando == "ENCUESTA_SI":
             guardar_estado_participante_encuesta(
                 encuesta["id"], numero, "esperando_respuesta"
             )
             enviar_pregunta_encuesta(numero, encuesta)
             return
 
-        enviar_texto(numero, "Pulsa *Vamos allá* para responder a la pregunta de hoy.")
-        return
-
-    # --------------------------------------------------------
-    # CAMBIAR
-    # --------------------------------------------------------
-    if comando == "CAMBIAR":
-        if estado != "confirmado":
-            enviar_texto(numero, "Todavía no tienes una respuesta registrada en la encuesta actual.")
+        if comando == "ENCUESTA_NO":
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "rechazada"
+            )
+            enviar_texto(numero, "De acuerdo. No participarás en esta encuesta.")
             return
 
+        # Si el usuario escribe Sí/No manualmente en vez de pulsar el botón.
+        if comando in ["SI", "SÍ"]:
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "esperando_respuesta"
+            )
+            enviar_pregunta_encuesta(numero, encuesta)
+            return
+
+        if comando == "NO":
+            guardar_estado_participante_encuesta(
+                encuesta["id"], numero, "rechazada"
+            )
+            enviar_texto(numero, "De acuerdo. No participarás en esta encuesta.")
+            return
+
+        enviar_texto(numero, "Pulsa *Sí* para participar o *No* para rechazar la encuesta.")
+        return
+
+    if comando == "ENCUESTA":
+        guardar_estado_participante_encuesta(encuesta["id"], numero, "esperando_respuesta")
+        enviar_pregunta_encuesta(numero, encuesta)
+        return
+
+    if comando == "CAMBIAR":
+        if estado != "confirmado":
+            enviar_texto(numero, "Todavía no tienes una respuesta registrada. Escribe ENCUESTA para participar.")
+            return
         guardar_estado_participante(numero, "esperando_cambio")
         enviar_pregunta_encuesta(numero, encuesta)
         return
 
-    # --------------------------------------------------------
-    # RESPUESTA A LA ENCUESTA
-    # --------------------------------------------------------
-    if estado in ["esperando_respuesta", "esperando_cambio"]:
+    if estado in ["esperando_respuesta", "esperando_cambio"] or comando == "ENCUESTA":
         ok, valor = validar(texto_limpio, encuesta)
-
         if not ok:
             enviar_texto(
                 numero,
@@ -1565,7 +1617,6 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
                 f"Responde {formato_instrucciones(encuesta) or 'con SÍ o NO'}"
             )
             return
-
         guardar_voto(numero, valor)
         enviar_confirmacion(numero, valor)
         return
@@ -1573,11 +1624,11 @@ def procesar(numero, texto=None, button_id=None, button_text=None):
     if estado == "confirmado":
         enviar_texto(
             numero,
-            "Tu respuesta ya está registrada. Escribe *CAMBIAR* si quieres modificarla."
+            "Tu voto ya está registrado. Escribe CAMBIAR para modificarlo, "
+            "RESULTADOS para ver los resultados o AYUDA para ver las opciones."
         )
-        return
-
-    enviar_ayuda(numero)
+    else:
+        enviar_ayuda(numero)
 
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -2039,6 +2090,7 @@ def api_lanzar():
         numeros = guardar_destinatarios(encuesta["id"], numeros)
     else:
         numeros = obtener_destinatarios(encuesta["id"])
+
     if not numeros:
         return jsonify({
             "ok": False,
@@ -2125,7 +2177,6 @@ def api_lanzar():
                     fecha_lanzamiento=CURRENT_TIMESTAMP,
                     fecha_programada=NULL,
                     fecha_cierre_real=NULL,
-                    resultados_enviados_at=NULL,
                     destinatarios=%s
                 WHERE id=%s
             """, (len(numeros), encuesta["id"]))
@@ -2148,13 +2199,13 @@ def api_lanzar():
 
     for numero in numeros:
         try:
-            # La plantilla pregunta_nueva es el único mensaje de inicio de encuesta.
-            # Su botón "Vamos allá" abre el paso de respuesta.
-            enviar_plantilla_pregunta_nueva(numero)
+            # Al lanzar una encuesta NO se envía todavía la primera pregunta.
+            # Primero se pide al participante que confirme si quiere participar.
+            enviar_invitacion_encuesta(numero)
             guardar_estado_participante_encuesta(
                 encuesta["id"],
                 numero,
-                "inicio_pendiente"
+                "invitacion_pendiente"
             )
             enviados += 1
         except Exception as ex:
@@ -2190,7 +2241,14 @@ def api_cerrar():
                 WHERE id=%s
             """,(e["id"],))
         conn.commit()
-    return jsonify({"ok":True,"id":e["id"]})
+
+    resultados_ok = enviar_resultados_encuesta(e["id"])
+
+    return jsonify({
+        "ok": True,
+        "id": e["id"],
+        "resultados_enviados": resultados_ok
+    })
 
 
 @app.route("/api/encuestas", methods=["GET"])
@@ -2533,28 +2591,6 @@ def api_resultados():
     if not encuesta.get("id"):
         return jsonify({"pregunta":"","tipo":"sino","cierre":None,"activa":False,"estado":"SIN_CONFIGURAR","total":0,"conteo":{},"destinatarios":0,"encuesta_id":None})
 
-    # Los resultados públicos solo se habilitan al día siguiente del lanzamiento.
-    fecha_lanzamiento = _fecha_db(encuesta.get("fecha_lanzamiento"))
-    ahora = _ahora_local()
-    resultados_disponibles = (
-        bool(fecha_lanzamiento)
-        and ahora >= fecha_lanzamiento + timedelta(days=1)
-    )
-
-    if not resultados_disponibles:
-        return jsonify({
-            "pregunta": encuesta.get("texto", ""),
-            "tipo": encuesta.get("tipo", "sino"),
-            "cierre": encuesta.get("cierre"),
-            "activa": bool(encuesta.get("activa")),
-            "estado": encuesta.get("estado", "BORRADOR"),
-            "resultados_disponibles": False,
-            "total": 0,
-            "conteo": {},
-            "destinatarios": encuesta.get("destinatarios", 0),
-            "encuesta_id": encuesta["id"]
-        })
-
     r=resumen_votos(encuesta["id"])
     return jsonify({
         "pregunta":encuesta.get("texto",""),
@@ -2562,7 +2598,6 @@ def api_resultados():
         "cierre":encuesta.get("cierre"),
         "activa":bool(encuesta.get("activa")),
         "estado":"ACTIVA" if encuesta.get("activa") else encuesta.get("estado","BORRADOR"),
-        "resultados_disponibles":True,
         "total":r["total"],"conteo":r["conteo"],
         "destinatarios":encuesta.get("destinatarios",0),
         "encuesta_id":encuesta["id"]
@@ -2584,6 +2619,9 @@ def health():
 # ============================================================
 # INICIO
 # ============================================================
+
+# Arranque del programador después de definir todas las funciones.
+iniciar_scheduler()
 
 if __name__ == "__main__":
     port = int(
